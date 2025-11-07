@@ -109,6 +109,9 @@ async function runInSandbox(ws, code) {
         // 4. Run the command using 'spawn'
         const compilerProcess = spawn('docker', dockerArgs);
 
+        //END STDIN input so yosys doesn't hang hopefully
+        compilerProcess.stdin.end();
+
         // 5. Stream STDOUT (Standard Output) to the client
         compilerProcess.stdout.on('data', (data) => {
             ws.send(data.toString());
