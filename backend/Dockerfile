@@ -1,5 +1,5 @@
 # Use a small, minimal base image
-FROM alpine:latest
+FROM alpine:3.21
 
 # Install yosys (our compiler)
 # 'apk add' is the package manager for Alpine Linux
