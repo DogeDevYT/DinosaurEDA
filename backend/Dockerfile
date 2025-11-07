@@ -1,9 +1,15 @@
-# Use a small, minimal base image
-FROM alpine:3.21
+# Use a specific, stable Alpine version
+FROM alpine:3.20
 
-# Install yosys (our compiler)
-# 'apk add' is the package manager for Alpine Linux
-RUN apk update && apk add yosys
-
-# Set a working directory inside the container
+# Set a working directory
 WORKDIR /app
+
+#
+# --- THIS IS THE FIX ---
+#
+# Enable the 'community' repository by uncommenting the correct line
+# in the repositories file. Then update the package list.
+#
+RUN sed -i 's/^#\(.*\/v3.20\/community\)$/\1/' /etc/apk/repositories && \
+    apk update && \
+    apk add yosys
