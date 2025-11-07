@@ -88,7 +88,6 @@ async function runInSandbox(ws, code) {
         const yosysArgs = [
             '-p', // Use a 'pass' script
             'read_verilog design.v; synth_ice40 -o build.bin; stat', // The script
-            'design.v' // The file to run on
         ];
 
         const dockerArgs = [
