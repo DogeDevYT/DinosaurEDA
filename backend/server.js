@@ -60,31 +60,40 @@ wss.on('connection', (ws) => {
  * @param {string} code - The Verilog code from the user.
  */
 async function runInSandbox(ws, code) {
-    // 1. Create a unique temporary directory on the HOST
-    const tempId = crypto.randomBytes(16).toString('hex');
-    const tempDir = path.join(__dirname, 'temp', tempId);
-    await fs.mkdir(tempDir, { recursive: true });
-
-    const codeFile = path.join(tempDir, 'design.v');
-    const hostPath = tempDir; // The path on our server
-    const containerPath = '/app'; // The path inside the Docker container
-
-    let heartbeatInterval = null; // For the "Compiling..." ticker
+    let heartbeatInterval = null; // To hold our "compiling..." timer
+    let tempDir = null;           // <-- FIX: Declare tempDir outside the try block
 
     try {
+        // --- FIX: Start heartbeat IMMEDIATELY ---
+        heartbeatInterval = setInterval(() => {
+            if (ws.readyState === ws.OPEN) {
+                ws.send("...working...\r\n"); // We'll see this right away
+            }
+        }, 2000);
+        ws.send('--- DEBUG: runInSandbox started. ---\r\n');
+
+        // 1. Create a unique temporary directory on the HOST
+        const tempId = crypto.randomBytes(16).toString('hex');
+        
+        // --- FIX: Assign tempDir (remove 'const') ---
+        tempDir = path.join(__dirname, 'temp', tempId); 
+        await fs.mkdir(tempDir, { recursive: true });
+        ws.send(`--- DEBUG: tempDir created. ---\r\n`);
+
+        const codeFile = path.join(tempDir, 'design.v');
+        const hostPath = tempDir; // The path on our server
+        const containerPath = '/app'; // The path inside the Docker container
+
         // 2. Write the user's code to a file
         await fs.writeFile(codeFile, code);
-        ws.send('--- Created temp file. Starting sandbox... ---\r\n');
+        ws.send('--- DEBUG: Code file written. ---\r\n');
 
         // 3. Define the Docker command
         const yosysCommand = 'yosys';
-        
-        // --- FIX: Correct Yosys arguments ---
         const yosysArgs = [
             '-p', // Use a 'pass' script
             'read_verilog design.v; synth_ice40 -o build.bin; stat' // The script
         ];
-
         const dockerArgs = [
             'run',
             '--rm',
@@ -94,16 +103,10 @@ async function runInSandbox(ws, code) {
             yosysCommand,
             ...yosysArgs
         ];
+        ws.send('--- DEBUG: Docker command prepared. Spawning process... ---\r\n');
+
 
         // 4. Run the command using 'spawn'
-        
-        // --- FEATURE: Start "Compiling..." heartbeat ---
-        heartbeatInterval = setInterval(() => {
-            if (ws.readyState === ws.OPEN) {
-                ws.send("Compiling...\r\n");
-            }
-        }, 2000);
-
         const compilerProcess = spawn('docker', dockerArgs);
 
         // 5. Stream STDOUT (Standard Output) to the client
@@ -135,13 +138,15 @@ async function runInSandbox(ws, code) {
         });
 
     } catch (err) {
-        // Handle errors in file writing or directory creation
+        // --- FIX: This block is now safe ---
         if (heartbeatInterval) clearInterval(heartbeatInterval); // Stop heartbeat on error
-        ws.send(`\r\n--- Server-side error: ${err.message} ---\r\n`);
+        ws.send(`\r\n--- FATAL Server-side error: ${err.message} ---\r\n`);
         
-        // Clean up even if we fail
-        await fs.rm(tempDir, { recursive: true, force: true })
-             .catch(err => console.error('Failed to clean up temp dir:', err));
+        // Only try to clean up if tempDir was successfully created
+        if (tempDir) {
+            await fs.rm(tempDir, { recursive: true, force: true })
+                 .catch(err => console.error('Failed to clean up temp dir:', err));
+        }
     }
 }
 
