@@ -91,8 +91,8 @@ async function runInSandbox(ws, code) {
         // 3. Define the Docker command
         const yosysCommand = 'yosys';
         const yosysArgs = [
-            '-p', // Use a 'pass' script
-            'read_verilog design.v; synth_ice40 -o build.bin; stat' // The script
+            '-p',
+            'read_verilog design.v; synth_ice40; write_blif build.blif; stat'
         ];
         const dockerArgs = [
             'run',
