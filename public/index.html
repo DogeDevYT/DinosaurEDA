@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
+    <meta charset="UTF-RAGHAV">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DinosaurEDA</title>
+    <title>DinosaurEDA IDE</title>
 
     <style>
         body, html {
@@ -16,17 +16,20 @@
             background-color: #1e1e1e; /* Dark background */
         }
 
+        /* --- FIX: Use 100% height and let flexbox manage children --- */
         #ide-container {
             display: flex;
             flex-direction: column;
             width: 100vw;
-            height: 100vh;
+            height: 100%; /* Changed from 100vh */
         }
 
+        /* --- FIX: Make controls bar a fixed, non-shrinking element --- */
         #controls {
             padding: 8px 12px;
             background-color: #333;
             border-bottom: 1px solid #444;
+            flex-shrink: 0; /* Add this line */
         }
 
         #compile-button {
@@ -43,16 +46,18 @@
             background-color: #005a9e;
         }
 
+        /* --- FIX: Use flex-grow for a 60% ratio of remaining space --- */
         #editor-container {
             width: 100%;
-            height: 60%; /* Editor takes 60% of height */
             border-bottom: 2px solid #333;
+            flex-grow: 6; /* Changed from height: 60% */
         }
 
+        /* --- FIX: Use flex-grow for a 40% ratio of remaining space --- */
         #terminal-container {
             width: 100%;
-            height: 40%; /* Terminal takes 40% of height */
             background-color: #1a1a1a;
+            flex-grow: 4; /* Changed from height: 40% */
         }
 
         /* Xterm.js specific styling */
@@ -102,7 +107,7 @@
                         '',
                         '  always @(posedge clk or posedge rst) begin',
                         '    if (rst) begin',
-                        '      count <= 8\'d0', // Fix: Missing semicolon
+                        '      count <= 8\'d0;', // Added semicolon
                         '    end else begin',
                         '      count <= count + 8\'d1;',
                         '    end',
@@ -126,11 +131,11 @@
                 }
             });
             term.open(document.getElementById('terminal-container'));
-            term.write('Welcome to the DinosaurEDA Compiler Terminal!\r\n');
+            term.write('Welcome to the HDL Compiler Terminal!\r\n');
             term.write('Connecting to backend server...\r\n');
 
             // --- 3. INITIALIZE WEBSOCKET ---
-            // Replace with your actual backend WebSocket URL
+            // Use wss:// for a secure connection on your domain
             const WEBSOCKET_URL = `wss://${window.location.host}/compile`; 
 
             function connectWebSocket() {
