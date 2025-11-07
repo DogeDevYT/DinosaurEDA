@@ -12,28 +12,28 @@
             width: 100%;
             height: 100%;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            overflow: hidden; /* Prevent scrolling */
-            background-color: #1e1e1e; /* Dark background */
+            overflow: hidden; 
+            background-color: #1e1e1e;
         }
 
-        /* --- FIX: Use 100% height and let flexbox manage children --- */
         #ide-container {
             display: flex;
             flex-direction: column;
             width: 100vw;
-            height: 100%; /* Changed from 100vh */
+            height: 100%;
         }
 
-        /* --- FIX: Make controls bar a fixed, non-shrinking element --- */
         #controls {
             padding: 8px 12px;
             background-color: #333;
             border-bottom: 1px solid #444;
-            flex-shrink: 0; /* Add this line */
+            flex-shrink: 0;
+            display: flex; /* Use flexbox for button alignment */
+            gap: 10px; /* Add space between buttons */
         }
 
-        #compile-button {
-            background-color: #007acc;
+        /* Base style for buttons */
+        .control-button {
             color: white;
             border: none;
             padding: 8px 16px;
@@ -42,32 +42,44 @@
             border-radius: 4px;
             cursor: pointer;
         }
+
+        #compile-button {
+            background-color: #007acc;
+        }
         #compile-button:hover {
             background-color: #005a9e;
         }
 
-        /* --- FIX: Use flex-grow for a 60% ratio of remaining space --- */
+        /* --- NEW: Style for the Detach button --- */
+        #detach-button {
+            background-color: #5a5a5a;
+        }
+        #detach-button:hover {
+            background-color: #7a7a7a;
+        }
+
         #editor-container {
             width: 100%;
             border-bottom: 2px solid #333;
-            flex-grow: 6; /* Changed from height: 60% */
+            flex-grow: 6;
         }
 
-        /* --- FIX: Use flex-grow for a 40% ratio of remaining space --- */
         #terminal-container {
             width: 100%;
             background-color: #1a1a1a;
-            flex-grow: 4; /* Changed from height: 40% */
+            flex-grow: 4;
         }
 
         /* Xterm.js specific styling */
         .xterm .xterm-viewport {
-            width: 100% !important; /* Fix a common scrollbar issue */
+            width: 100% !important;
         }
     </style>
 
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm/css/xterm.css" />
     <script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.js"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-clipboard/lib/xterm-addon-clipboard.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs/loader.js"></script>
 </head>
@@ -76,7 +88,8 @@
     <div id="ide-container">
         
         <div id="controls">
-            <button id="compile-button">▶ Run Synthesis</button>
+            <button id="compile-button" class="control-button">▶ Run Synthesis</button>
+            <button id="detach-button" class="control-button">Detach Terminal</button>
         </div>
 
         <div id="editor-container"></div>
@@ -85,20 +98,22 @@
     </div>
 
     <script>
-        // Wait for the DOM to be fully loaded
         document.addEventListener('DOMContentLoaded', () => {
 
-            let editor; // To hold the Monaco editor instance
-            let term; // To hold the Xterm.js terminal instance
-            let socket; // To hold the WebSocket
+            let editor; 
+            let term; 
+            let socket; 
+            
+            // --- NEW: State variables for detached terminal ---
+            let terminalWindow = null; // To hold the popup window object
+            let originalTerminalContainer = document.getElementById('terminal-container');
 
             // --- 1. INITIALIZE MONACO EDITOR ---
             require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs' }});
             require(['vs/editor/editor.main'], () => {
                 editor = monaco.editor.create(document.getElementById('editor-container'), {
                     value: [
-                        '// --- Welcome to your Web IDE ---',
-                        '// --- Try adding a syntax error! ---',
+                        '// --- Welcome! Copy/Paste is now enabled in the terminal. ---',
                         'module top (',
                         '  input clk,',
                         '  input rst,',
@@ -107,7 +122,7 @@
                         '',
                         '  always @(posedge clk or posedge rst) begin',
                         '    if (rst) begin',
-                        '      count <= 8\'d0;', // Added semicolon
+                        '      count <= 8\'d0;',
                         '    end else begin',
                         '      count <= count + 8\'d1;',
                         '    end',
@@ -116,91 +131,129 @@
                         'endmodule'
                     ].join('\n'),
                     language: 'verilog',
-                    theme: 'vs-dark' // Use the dark theme
+                    theme: 'vs-dark'
                 });
-
-                // Resize editor on window resize
                 window.addEventListener('resize', () => editor.layout());
             });
 
             // --- 2. INITIALIZE XTERM.JS TERMINAL ---
             term = new Terminal({
                 cursorBlink: true,
-                theme: {
-                    background: '#1a1a1a'
-                }
+                theme: { background: '#1a1a1a' },
+                // --- NEW: Enable copy/paste on selection ---
+                allowProposedApi: true, // Required for modern clipboard features
+                macOptionIsMeta: true,
+                macOptionClickForcesSelection: true
             });
-            term.open(document.getElementById('terminal-container'));
+
+            // --- NEW: Load the Clipboard Addon ---
+            // This enables Ctrl+C, Ctrl+V (or Cmd+C, Cmd+V)
+            term.loadAddon(new ClipboardAddon.ClipboardAddon());
+
+            // Open the terminal in its default container
+            term.open(originalTerminalContainer);
             term.write('Welcome to the HDL Compiler Terminal!\r\n');
             term.write('Connecting to backend server...\r\n');
 
+
             // --- 3. INITIALIZE WEBSOCKET ---
-            // Use wss:// for a secure connection on your domain
             const WEBSOCKET_URL = `wss://${window.location.host}/compile`; 
 
             function connectWebSocket() {
                 try {
                     socket = new WebSocket(WEBSOCKET_URL);
-
-                    // Handle successful connection
-                    socket.onopen = () => {
-                        term.write('\x1b[32mSuccessfully connected to backend.\x1b[0m\r\n');
-                    };
-
-                    // Handle messages from the server (compiler output)
-                    socket.onmessage = (event) => {
-                        // The server sends stdout/stderr, just write it directly
-                        // We use \r\n (carriage return + newline) for terminal compatibility
-                        term.write(event.data.replace(/\n/g, '\r\n'));
-                    };
-
-                    // Handle errors (e.g., server is down)
-                    socket.onerror = (error) => {
-                        term.write('\x1b[31mWebSocket Error: Could not connect to backend.\r\n');
-                        term.write('Please ensure the server at ' + WEBSOCKET_URL + ' is running.\x1b[0m\r\n');
-                        console.error('WebSocket Error:', error);
-                    };
-
-                    // Handle connection closed
-                    socket.onclose = () => {
-                        term.write('\x1b[33mConnection to backend closed.\x1b[0m\r\n');
-                    };
-
+                    socket.onopen = () => term.write('\x1b[32mSuccessfully connected to backend.\x1b[0m\r\n');
+                    socket.onmessage = (event) => term.write(event.data.replace(/\n/g, '\r\n'));
+                    socket.onerror = (error) => term.write('\x1b[31mWebSocket Error.\x1b[0m\r\n');
+                    socket.onclose = () => term.write('\x1b[33mConnection to backend closed.\x1b[0m\r\n');
                 } catch (err) {
                     term.write('\x1b[31mFailed to create WebSocket. ' + err.message + '\x1b[0m\r\n');
                 }
             }
-            
-            // Try to connect when the page loads
             connectWebSocket();
 
             // --- 4. HOOK UP "RUN" BUTTON ---
-            const compileButton = document.getElementById('compile-button');
-            compileButton.addEventListener('click', () => {
-                if (!editor) {
-                    alert('Editor is not initialized yet.');
-                    return;
-                }
-                
+            document.getElementById('compile-button').addEventListener('click', () => {
                 if (!socket || socket.readyState !== WebSocket.OPEN) {
-                    term.write('\x1b[31mNot connected to backend. Attempting to reconnect...\x1b[0m\r\n');
-                    connectWebSocket(); // Try to reconnect
+                    term.write('\x1b[31mNot connected. Reconnecting...\x1b[0m\r\n');
+                    connectWebSocket();
                     return;
                 }
-
-                // Get the code from the editor
-                const code = editor.getValue();
-                
-                // Send the code to the backend server
-                const payload = {
-                    language: 'verilog',
-                    code: code
-                };
+                const payload = { language: 'verilog', code: editor.getValue() };
                 socket.send(JSON.stringify(payload));
-                
-                // Clear the terminal for new output
-                term.write('\x1b[2J\x1b[H'); // Clears the terminal screen
+                term.write('\x1b[2J\x1b[H'); // Clear screen
                 term.write('--- Compilation started... ---\r\n');
+            });
+
+
+            // --- 5. NEW: LOGIC FOR DETACH/RE-ATTACH BUTTON ---
+            const detachButton = document.getElementById('detach-button');
+            
+            function reattachTerminal() {
+                if (!terminalWindow) return; // Already attached
+
+                originalTerminalContainer.style.display = 'block'; // Show old container
+                term.open(originalTerminalContainer); // Re-attach
+                term.focus();
+
+                terminalWindow.onbeforeunload = null; // Prevent close loop
+                terminalWindow.close();
+                terminalWindow = null;
+                
+                detachButton.textContent = 'Detach Terminal';
+            }
+            
+            detachButton.addEventListener('click', () => {
+                if (terminalWindow) {
+                    // It's already detached, so re-attach it
+                    reattachTerminal();
+                } else {
+                    // It's attached, so detach it
+                    originalTerminalContainer.style.display = 'none'; // Hide old container
+                    
+                    // Create the new popup window
+                    terminalWindow = window.open('', 'TerminalWindow', 'width=800,height=600');
+                    if (!terminalWindow) {
+                        alert('Popup blocked. Please allow popups for this site.');
+                        originalTerminalContainer.style.display = 'block';
+                        return;
+                    }
+                    
+                    // 1. Set title and basic styles for the new window
+                    terminalWindow.document.head.innerHTML = `
+                        <title>Terminal</title>
+                        <style>
+                            body, html { 
+                                margin: 0; padding: 0; height: 100%; width: 100%; 
+                                overflow: hidden; background-color: #1a1a1a; 
+                            }
+                        </style>
+                    `;
+                    
+                    // 2. Add Xterm.js CSS to the new window
+                    const xtermCss = terminalWindow.document.createElement('link');
+                    xtermCss.rel = 'stylesheet';
+                    xtermCss.href = 'https://cdn.jsdelivr.net/npm/xterm/css/xterm.css';
+                    terminalWindow.document.head.appendChild(xtermCss);
+                    
+                    // 3. Create a container in the new window for the terminal
+                    const newTermContainer = terminalWindow.document.createElement('div');
+                    newTermContainer.id = 'new-terminal-container';
+                    newTermContainer.style.height = '100%';
+                    newTermContainer.style.width = '100%';
+                    terminalWindow.document.body.appendChild(newTermContainer);
+                    
+                    // 4. Re-attach the *existing* terminal instance to the new window
+                    term.open(newTermContainer);
+                    term.focus();
+                    
+                    // 5. Listen for when the user closes the popup
+                    terminalWindow.onbeforeunload = () => {
+                        reattachTerminal();
+                    };
+                    
+                    detachButton.textContent = 'Re-attach Terminal';
+                }
             });
         });
     </script>
