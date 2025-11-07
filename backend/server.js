@@ -10,9 +10,9 @@ const crypto = require('crypto'); // To create unique IDs
 // --- 2. Setup Server ---
 const app = express();
 
-//route to our public directory to serve static files
+// --- FIX: Serve static files from the '../public' directory ---
+// This tells Express to send index.html when someone visits '/'
 app.use(express.static(path.join(__dirname, '..', 'public')));
-//$CURRENT_DIR/../public
 
 // Create an HTTP server from our Express app
 const server = http.createServer(app);
@@ -22,7 +22,8 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/compile' });
 
 const PORT = 8080;
-const DOCKER_IMAGE = 'yosys-compiler-img';
+// Use the pre-built Yosys image name
+const DOCKER_IMAGE = 'yosys-compiler-img'; 
 
 // --- 3. WebSocket Connection Logic ---
 wss.on('connection', (ws) => {
@@ -60,7 +61,6 @@ wss.on('connection', (ws) => {
  */
 async function runInSandbox(ws, code) {
     // 1. Create a unique temporary directory on the HOST
-    // This is safer than writing to a fixed path
     const tempId = crypto.randomBytes(16).toString('hex');
     const tempDir = path.join(__dirname, 'temp', tempId);
     await fs.mkdir(tempDir, { recursive: true });
@@ -69,25 +69,20 @@ async function runInSandbox(ws, code) {
     const hostPath = tempDir; // The path on our server
     const containerPath = '/app'; // The path inside the Docker container
 
+    let heartbeatInterval = null; // For the "Compiling..." ticker
+
     try {
         // 2. Write the user's code to a file
         await fs.writeFile(codeFile, code);
         ws.send('--- Created temp file. Starting sandbox... ---\r\n');
 
         // 3. Define the Docker command
-        // We will run Yosys with a simple synthesis command
-        // This command:
-        //   - 'docker run' : Starts a new container
-        //   - '--rm' : Automatically deletes the container when it exits
-        //   - '-v "..."' : Mounts our tempDir into the container's /app dir
-        //   - '-w "..."' : Sets the working directory inside the container
-        //   - DOCKER_IMAGE : 'yosys-compiler-img'
-        //   - 'yosys' : The command to run
-        //   - ...args : Arguments for Yosys
         const yosysCommand = 'yosys';
+        
+        // --- FIX: Correct Yosys arguments ---
         const yosysArgs = [
             '-p', // Use a 'pass' script
-            'read_verilog design.v; synth_ice40 -o build.bin; stat', // The script
+            'read_verilog design.v; synth_ice40 -o build.bin; stat' // The script
         ];
 
         const dockerArgs = [
@@ -101,7 +96,14 @@ async function runInSandbox(ws, code) {
         ];
 
         // 4. Run the command using 'spawn'
-        // 'spawn' streams stdout/stderr, which is perfect for a live terminal
+        
+        // --- FEATURE: Start "Compiling..." heartbeat ---
+        heartbeatInterval = setInterval(() => {
+            if (ws.readyState === ws.OPEN) {
+                ws.send("Compiling...\r\n");
+            }
+        }, 2000);
+
         const compilerProcess = spawn('docker', dockerArgs);
 
         // 5. Stream STDOUT (Standard Output) to the client
@@ -110,13 +112,13 @@ async function runInSandbox(ws, code) {
         });
 
         // 6. Stream STDERR (Error Output) to the client
-        // We send errors to the same terminal
         compilerProcess.stderr.on('data', (data) => {
             ws.send(data.toString());
         });
 
         // 7. Handle process exit
         compilerProcess.on('close', (code) => {
+            clearInterval(heartbeatInterval); // Stop the heartbeat
             ws.send(`\r\n--- Compilation finished (exit code ${code}) ---\r\n`);
             
             // 8. CRITICAL: Clean up the temp directory
@@ -126,6 +128,7 @@ async function runInSandbox(ws, code) {
 
         // 8. Handle spawn errors (e.g., "docker" command not found)
         compilerProcess.on('error', (err) => {
+            clearInterval(heartbeatInterval); // Stop the heartbeat
             ws.send(`\r\n--- FATAL: Failed to start compiler: ${err.message} ---\r\n`);
             fs.rm(tempDir, { recursive: true, force: true })
                 .catch(err => console.error('Failed to clean up temp dir:', err));
@@ -133,7 +136,9 @@ async function runInSandbox(ws, code) {
 
     } catch (err) {
         // Handle errors in file writing or directory creation
+        if (heartbeatInterval) clearInterval(heartbeatInterval); // Stop heartbeat on error
         ws.send(`\r\n--- Server-side error: ${err.message} ---\r\n`);
+        
         // Clean up even if we fail
         await fs.rm(tempDir, { recursive: true, force: true })
              .catch(err => console.error('Failed to clean up temp dir:', err));
