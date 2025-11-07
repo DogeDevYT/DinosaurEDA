@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-RAGHAV">
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DinosaurEDA IDE</title>
+    <title>Web HDL IDE</title>
 
     <style>
         body, html {
@@ -28,11 +28,10 @@
             background-color: #333;
             border-bottom: 1px solid #444;
             flex-shrink: 0;
-            display: flex; /* Use flexbox for button alignment */
-            gap: 10px; /* Add space between buttons */
+            display: flex;
+            gap: 10px;
         }
 
-        /* Base style for buttons */
         .control-button {
             color: white;
             border: none;
@@ -50,7 +49,6 @@
             background-color: #005a9e;
         }
 
-        /* --- NEW: Style for the Detach button --- */
         #detach-button {
             background-color: #5a5a5a;
         }
@@ -70,7 +68,6 @@
             flex-grow: 4;
         }
 
-        /* Xterm.js specific styling */
         .xterm .xterm-viewport {
             width: 100% !important;
         }
@@ -78,9 +75,7 @@
 
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm/css/xterm.css" />
     <script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.js"></script>
-    
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-clipboard/lib/xterm-addon-clipboard.js"></script>
-
     <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs/loader.js"></script>
 </head>
 
@@ -93,7 +88,6 @@
         </div>
 
         <div id="editor-container"></div>
-        
         <div id="terminal-container"></div>
     </div>
 
@@ -104,8 +98,7 @@
             let term; 
             let socket; 
             
-            // --- NEW: State variables for detached terminal ---
-            let terminalWindow = null; // To hold the popup window object
+            let terminalWindow = null; 
             let originalTerminalContainer = document.getElementById('terminal-container');
 
             // --- 1. INITIALIZE MONACO EDITOR ---
@@ -140,15 +133,11 @@
             term = new Terminal({
                 cursorBlink: true,
                 theme: { background: '#1a1a1a' },
-                // --- NEW: Enable copy/paste on selection ---
-                allowProposedApi: true, // Required for modern clipboard features
-                macOptionIsMeta: true,
-                macOptionClickForcesSelection: true
+                allowProposedApi: true // Keep this for the addon
             });
 
-            // --- NEW: Load the Clipboard Addon ---
-            // This enables Ctrl+C, Ctrl+V (or Cmd+C, Cmd+V)
-            term.loadAddon(new ClipboardAddon.ClipboardAddon());
+            // --- FIX 1: Correct way to load the addon ---
+            term.loadAddon(new ClipboardAddon());
 
             // Open the terminal in its default container
             term.open(originalTerminalContainer);
@@ -173,27 +162,45 @@
             connectWebSocket();
 
             // --- 4. HOOK UP "RUN" BUTTON ---
+            // --- FIX 2: This is the line that was broken ---
             document.getElementById('compile-button').addEventListener('click', () => {
-                if (!socket || socket.readyState !== WebSocket.OPEN) {
-                    term.write('\x1b[31mNot connected. Reconnecting...\x1b[0m\r\n');
-                    connectWebSocket();
+                if (!editor) {
+                    alert('Editor is not initialized yet.');
                     return;
                 }
-                const payload = { language: 'verilog', code: editor.getValue() };
+                
+                if (!socket || socket.readyState !== WebSocket.OPEN) {
+                    term.write('\x1b[31mNot connected to backend. Attempting to reconnect...\x1b[0m\r\n');
+                    connectWebSocket(); // Try to reconnect
+                    return;
+                }
+
+                // Get the code from the editor
+                const code = editor.getValue();
+                
+                // Send the code to the backend server
+                const payload = {
+                    language: 'verilog',
+                    code: code
+                };
                 socket.send(JSON.stringify(payload));
-                term.write('\x1b[2J\x1b[H'); // Clear screen
+                
+                // Clear the terminal for new output
+                term.write('\x1b[2J\x1b[H'); // Clears the terminal screen
                 term.write('--- Compilation started... ---\r\n');
             });
+            // --- END OF FIX 2 ---
 
 
-            // --- 5. NEW: LOGIC FOR DETACH/RE-ATTACH BUTTON ---
+            // --- 5. LOGIC FOR DETACH/RE-ATTACH BUTTON ---
             const detachButton = document.getElementById('detach-button');
             
             function reattachTerminal() {
                 if (!terminalWindow) return; // Already attached
 
-                originalTerminalContainer.style.display = 'block'; // Show old container
-                term.open(originalTerminalContainer); // Re-attach
+                // Show old container and re-attach terminal
+                originalTerminalContainer.style.display = 'block'; 
+                term.open(originalTerminalContainer); 
                 term.focus();
 
                 terminalWindow.onbeforeunload = null; // Prevent close loop
@@ -205,7 +212,7 @@
             
             detachButton.addEventListener('click', () => {
                 if (terminalWindow) {
-                    // It's already detached, so re-attach it
+                    // It's detached, so re-attach it
                     reattachTerminal();
                 } else {
                     // It's attached, so detach it
