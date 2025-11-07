@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DinosaurEDA</title>
+
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            overflow: hidden; /* Prevent scrolling */
+            background-color: #1e1e1e; /* Dark background */
+        }
+
+        #ide-container {
+            display: flex;
+            flex-direction: column;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #controls {
+            padding: 8px 12px;
+            background-color: #333;
+            border-bottom: 1px solid #444;
+        }
+
+        #compile-button {
+            background-color: #007acc;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            font-size: 14px;
+            font-weight: 600;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        #compile-button:hover {
+            background-color: #005a9e;
+        }
+
+        #editor-container {
+            width: 100%;
+            height: 60%; /* Editor takes 60% of height */
+            border-bottom: 2px solid #333;
+        }
+
+        #terminal-container {
+            width: 100%;
+            height: 40%; /* Terminal takes 40% of height */
+            background-color: #1a1a1a;
+        }
+
+        /* Xterm.js specific styling */
+        .xterm .xterm-viewport {
+            width: 100% !important; /* Fix a common scrollbar issue */
+        }
+    </style>
+
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm/css/xterm.css" />
+    <script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.js"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs/loader.js"></script>
+</head>
+
+<body>
+    <div id="ide-container">
+        
+        <div id="controls">
+            <button id="compile-button">▶ Run Synthesis</button>
+        </div>
+
+        <div id="editor-container"></div>
+        
+        <div id="terminal-container"></div>
+    </div>
+
+    <script>
+        // Wait for the DOM to be fully loaded
+        document.addEventListener('DOMContentLoaded', () => {
+
+            let editor; // To hold the Monaco editor instance
+            let term; // To hold the Xterm.js terminal instance
+            let socket; // To hold the WebSocket
+
+            // --- 1. INITIALIZE MONACO EDITOR ---
+            require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs' }});
+            require(['vs/editor/editor.main'], () => {
+                editor = monaco.editor.create(document.getElementById('editor-container'), {
+                    value: [
+                        '// --- Welcome to your Web IDE ---',
+                        '// --- Try adding a syntax error! ---',
+                        'module top (',
+                        '  input clk,',
+                        '  input rst,',
+                        '  output reg [7:0] count',
+                        ');',
+                        '',
+                        '  always @(posedge clk or posedge rst) begin',
+                        '    if (rst) begin',
+                        '      count <= 8\'d0', // Fix: Missing semicolon
+                        '    end else begin',
+                        '      count <= count + 8\'d1;',
+                        '    end',
+                        '  end',
+                        '',
+                        'endmodule'
+                    ].join('\n'),
+                    language: 'verilog',
+                    theme: 'vs-dark' // Use the dark theme
+                });
+
+                // Resize editor on window resize
+                window.addEventListener('resize', () => editor.layout());
+            });
+
+            // --- 2. INITIALIZE XTERM.JS TERMINAL ---
+            term = new Terminal({
+                cursorBlink: true,
+                theme: {
+                    background: '#1a1a1a'
+                }
+            });
+            term.open(document.getElementById('terminal-container'));
+            term.write('Welcome to the DinosaurEDA Compiler Terminal!\r\n');
+            term.write('Connecting to backend server...\r\n');
+
+            // --- 3. INITIALIZE WEBSOCKET ---
+            // Replace with your actual backend WebSocket URL
+            const WEBSOCKET_URL = `ws://${window.location.host}/compile`; 
+
+            function connectWebSocket() {
+                try {
+                    socket = new WebSocket(WEBSOCKET_URL);
+
+                    // Handle successful connection
+                    socket.onopen = () => {
+                        term.write('\x1b[32mSuccessfully connected to backend.\x1b[0m\r\n');
+                    };
+
+                    // Handle messages from the server (compiler output)
+                    socket.onmessage = (event) => {
+                        // The server sends stdout/stderr, just write it directly
+                        // We use \r\n (carriage return + newline) for terminal compatibility
+                        term.write(event.data.replace(/\n/g, '\r\n'));
+                    };
+
+                    // Handle errors (e.g., server is down)
+                    socket.onerror = (error) => {
+                        term.write('\x1b[31mWebSocket Error: Could not connect to backend.\r\n');
+                        term.write('Please ensure the server at ' + WEBSOCKET_URL + ' is running.\x1b[0m\r\n');
+                        console.error('WebSocket Error:', error);
+                    };
+
+                    // Handle connection closed
+                    socket.onclose = () => {
+                        term.write('\x1b[33mConnection to backend closed.\x1b[0m\r\n');
+                    };
+
+                } catch (err) {
+                    term.write('\x1b[31mFailed to create WebSocket. ' + err.message + '\x1b[0m\r\n');
+                }
+            }
+            
+            // Try to connect when the page loads
+            connectWebSocket();
+
+            // --- 4. HOOK UP "RUN" BUTTON ---
+            const compileButton = document.getElementById('compile-button');
+            compileButton.addEventListener('click', () => {
+                if (!editor) {
+                    alert('Editor is not initialized yet.');
+                    return;
+                }
+                
+                if (!socket || socket.readyState !== WebSocket.OPEN) {
+                    term.write('\x1b[31mNot connected to backend. Attempting to reconnect...\x1b[0m\r\n');
+                    connectWebSocket(); // Try to reconnect
+                    return;
+                }
+
+                // Get the code from the editor
+                const code = editor.getValue();
+                
+                // Send the code to the backend server
+                const payload = {
+                    language: 'verilog',
+                    code: code
+                };
+                socket.send(JSON.stringify(payload));
+                
+                // Clear the terminal for new output
+                term.write('\x1b[2J\x1b[H'); // Clears the terminal screen
+                term.write('--- Compilation started... ---\r\n');
+            });
+        });
+    </script>
+</body>
+</html>
