@@ -11,7 +11,8 @@ const crypto = require('crypto'); // To create unique IDs
 const app = express();
 
 //route to our public directory to serve static files
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, '..', 'public')));
+//$CURRENT_DIR/../public
 
 // Create an HTTP server from our Express app
 const server = http.createServer(app);
