@@ -75,7 +75,7 @@
 
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm/css/xterm.css" />
     <script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-clipboard/lib/xterm-addon-clipboard.js"></script>
+    
     <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs/loader.js"></script>
 </head>
 
@@ -106,7 +106,7 @@
             require(['vs/editor/editor.main'], () => {
                 editor = monaco.editor.create(document.getElementById('editor-container'), {
                     value: [
-                        '// --- Welcome! Copy/Paste is now enabled in the terminal. ---',
+                        '// --- Welcome to your Web IDE ---',
                         'module top (',
                         '  input clk,',
                         '  input rst,',
@@ -132,12 +132,12 @@
             // --- 2. INITIALIZE XTERM.JS TERMINAL ---
             term = new Terminal({
                 cursorBlink: true,
-                theme: { background: '#1a1a1a' },
-                allowProposedApi: true // Keep this for the addon
+                theme: { background: '#1a1a1a' }
+                // --- allowProposedApi REMOVED (was for clipboard) ---
             });
 
-            // --- FIX 1: Correct way to load the addon ---
-            term.loadAddon(new ClipboardAddon());
+            // --- CLIPBOARD ADDON LINE REMOVED ---
+            // term.loadAddon(new ClipboardAddon());
 
             // Open the terminal in its default container
             term.open(originalTerminalContainer);
@@ -162,7 +162,6 @@
             connectWebSocket();
 
             // --- 4. HOOK UP "RUN" BUTTON ---
-            // --- FIX 2: This is the line that was broken ---
             document.getElementById('compile-button').addEventListener('click', () => {
                 if (!editor) {
                     alert('Editor is not initialized yet.');
@@ -175,35 +174,29 @@
                     return;
                 }
 
-                // Get the code from the editor
                 const code = editor.getValue();
-                
-                // Send the code to the backend server
                 const payload = {
                     language: 'verilog',
                     code: code
                 };
                 socket.send(JSON.stringify(payload));
                 
-                // Clear the terminal for new output
                 term.write('\x1b[2J\x1b[H'); // Clears the terminal screen
                 term.write('--- Compilation started... ---\r\n');
             });
-            // --- END OF FIX 2 ---
 
 
             // --- 5. LOGIC FOR DETACH/RE-ATTACH BUTTON ---
             const detachButton = document.getElementById('detach-button');
             
             function reattachTerminal() {
-                if (!terminalWindow) return; // Already attached
+                if (!terminalWindow) return; 
 
-                // Show old container and re-attach terminal
                 originalTerminalContainer.style.display = 'block'; 
                 term.open(originalTerminalContainer); 
                 term.focus();
 
-                terminalWindow.onbeforeunload = null; // Prevent close loop
+                terminalWindow.onbeforeunload = null; 
                 terminalWindow.close();
                 terminalWindow = null;
                 
@@ -212,13 +205,10 @@
             
             detachButton.addEventListener('click', () => {
                 if (terminalWindow) {
-                    // It's detached, so re-attach it
                     reattachTerminal();
                 } else {
-                    // It's attached, so detach it
-                    originalTerminalContainer.style.display = 'none'; // Hide old container
+                    originalTerminalContainer.style.display = 'none'; 
                     
-                    // Create the new popup window
                     terminalWindow = window.open('', 'TerminalWindow', 'width=800,height=600');
                     if (!terminalWindow) {
                         alert('Popup blocked. Please allow popups for this site.');
@@ -226,7 +216,6 @@
                         return;
                     }
                     
-                    // 1. Set title and basic styles for the new window
                     terminalWindow.document.head.innerHTML = `
                         <title>Terminal</title>
                         <style>
@@ -237,24 +226,20 @@
                         </style>
                     `;
                     
-                    // 2. Add Xterm.js CSS to the new window
                     const xtermCss = terminalWindow.document.createElement('link');
                     xtermCss.rel = 'stylesheet';
                     xtermCss.href = 'https://cdn.jsdelivr.net/npm/xterm/css/xterm.css';
                     terminalWindow.document.head.appendChild(xtermCss);
                     
-                    // 3. Create a container in the new window for the terminal
                     const newTermContainer = terminalWindow.document.createElement('div');
                     newTermContainer.id = 'new-terminal-container';
                     newTermContainer.style.height = '100%';
                     newTermContainer.style.width = '100%';
                     terminalWindow.document.body.appendChild(newTermContainer);
                     
-                    // 4. Re-attach the *existing* terminal instance to the new window
                     term.open(newTermContainer);
                     term.focus();
                     
-                    // 5. Listen for when the user closes the popup
                     terminalWindow.onbeforeunload = () => {
                         reattachTerminal();
                     };
