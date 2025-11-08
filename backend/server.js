@@ -294,7 +294,7 @@ async function runDiagramGeneration(ws, verilogCode) {
         ];
         const dockerArgs = [
             'run', '--rm', '-v', `${tempDir}:${'/app'}`,
-            '-w', '/app', DOCKAER_IMAGE, yosysCommand, ...yosysArgs
+            '-w', '/app', DOCKER_IMAGE, yosysCommand, ...yosysArgs
         ];
         
         // 3. Run Yosys (Docker) process
