@@ -56,7 +56,6 @@
             background-color: #7a7a7a;
         }
         
-        /* --- NEW: AI Generator Button Style --- */
         #generate-ai-button {
             background-color: #0c8a4d;
         }
@@ -64,7 +63,7 @@
             background-color: #11b866;
         }
 
-        /* --- NEW: Diagram Button Style --- */
+        /* --- This is the style for the button you were missing --- */
         #generate-diagram-button { background-color: #8a0c8a; }
         #generate-diagram-button:hover { background-color: #b811b8; }
 
@@ -91,8 +90,8 @@
             bottom: 0;
         }
         
-        /* --- NEW: AI Modal Styles --- */
-        #ai-modal-overlay {
+        /* --- Modal Base Styles --- */
+        .modal-overlay {
             display: none; /* Hidden by default */
             position: fixed;
             z-index: 100;
@@ -105,7 +104,7 @@
             align-items: center;
         }
         
-        #ai-modal-content {
+        .modal-content {
             background-color: #2a2a2a;
             border: 1px solid #444;
             border-radius: 8px;
@@ -115,12 +114,28 @@
             color: white;
         }
         
-        #ai-modal-content h3 {
+        .modal-content h3 {
             margin-top: 0;
             border-bottom: 1px solid #444;
             padding-bottom: 10px;
         }
+
+        .modal-buttons {
+            margin-top: 15px;
+            text-align: right;
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+
+        .modal-buttons button {
+            background-color: #5a5a5a;
+        }
         
+        /* --- AI Modal Specifics --- */
+        #ai-modal-content {
+            /* This selector is for the AI modal */
+        }
         #ai-prompt-textarea {
             width: 100%;
             height: 150px;
@@ -128,21 +143,9 @@
             border: 1px solid #555;
             color: white;
             font-size: 14px;
-            box-sizing: border-box; /* Fixes padding issue */
+            box-sizing: border-box;
             padding: 10px;
             margin-top: 10px;
-        }
-        
-        #ai-modal-buttons {
-            margin-top: 15px;
-            text-align: right;
-            display: flex;
-            gap: 10px;
-            justify-content: flex-end;
-        }
-        
-        #ai-modal-buttons button {
-            background-color: #5a5a5a;
         }
         #ai-modal-buttons button#run-generation-button {
             background-color: #0c8a4d;
@@ -152,7 +155,7 @@
             cursor: not-allowed;
         }
 
-        /* --- NEW: Diagram Modal Styles --- */
+        /* --- This is the style for the diagram modal you were missing --- */
         #diagram-modal-content { width: 80vw; max-width: 1200px; }
         #diagram-image-container { 
             width: 100%; max-height: 70vh; overflow: auto; 
@@ -180,20 +183,34 @@
             <button id="compile-button" class="control-button">▶ Run Synthesis</button>
             <button id="detach-button" class="control-button">Detach Terminal</button>
             <button id="generate-ai-button" class="control-button">✨ Generate Verilog</button>
+            <button id="generate-diagram-button" class="control-button">📊 Generate Diagram</button>
         </div>
 
         <div id="editor-container"></div>
         <div id="terminal-container"></div>
     </div>
     
-    <div id="ai-modal-overlay">
-        <div id="ai-modal-content">
+    <div id="ai-modal-overlay" class="modal-overlay">
+        <div id="ai-modal-content" class="modal-content">
             <h3>✨ Generate Verilog with AI</h3>
             <p>Describe the circuit you want to build:</p>
             <textarea id="ai-prompt-textarea" placeholder="e.g., a 4-bit counter with synchronous reset..."></textarea>
             <div id="ai-modal-buttons">
                 <button id="close-modal-button" class="control-button">Cancel</button>
                 <button id="run-generation-button" class="control-button">Generate</button>
+            </div>
+        </div>
+    </div>
+    
+    <div id="diagram-modal-overlay" class="modal-overlay">
+        <div id="diagram-modal-content" class="modal-content">
+            <h3>Circuit Diagram</h3>
+            <div id="diagram-image-container">
+                <img id="diagram-image" src="" alt="Circuit Diagram" />
+            </div>
+            <div class="modal-buttons">
+                <a id="diagram-download-link" href="#" download="circuit.png" class="control-button">Download PNG</a>
+                <button id="close-diagram-modal-button" class="control-button">Close</button>
             </div>
         </div>
     </div>
@@ -207,14 +224,14 @@
             let editorContainer = document.getElementById('editor-container');
             const fitAddon = new FitAddon.FitAddon();
             
-            // --- NEW: Get AI Modal DOM Elements ---
+            // AI Modal Elements
             const aiModal = document.getElementById('ai-modal-overlay');
             const generateAiButton = document.getElementById('generate-ai-button');
             const closeModalButton = document.getElementById('close-modal-button');
             const runGenerationButton = document.getElementById('run-generation-button');
             const aiPromptTextarea = document.getElementById('ai-prompt-textarea');
-
-            // --- NEW: Diagram Modal Elements ---
+            
+            // --- These are the diagram modal elements you were missing ---
             const diagramModal = document.getElementById('diagram-modal-overlay');
             const generateDiagramButton = document.getElementById('generate-diagram-button');
             const closeDiagramModalButton = document.getElementById('close-diagram-modal-button');
@@ -250,7 +267,6 @@
                 try {
                     socket = new WebSocket(WEBSOCKET_URL);
 
-                    // --- REFACTOR: Handle JSON messages from server ---
                     socket.onmessage = (event) => {
                         try {
                             const data = JSON.parse(event.data);
@@ -265,8 +281,9 @@
                                 aiModal.style.display = 'none'; // Hide modal
                                 runGenerationButton.disabled = false;
                                 runGenerationButton.textContent = 'Generate';
+                                
+                            // --- This is the message handler you were missing ---
                             } else if (data.type === 'diagramResult') {
-                                // --- Handle Diagram Response ---
                                 if (data.imageUrl) {
                                     diagramImage.src = data.imageUrl;
                                     diagramDownloadLink.href = data.imageUrl;
@@ -276,7 +293,6 @@
                                 }
                             }
                         } catch (e) {
-                            // Fallback for non-JSON messages (shouldn't happen)
                             console.error("Received non-JSON message:", event.data);
                         }
                     };
@@ -303,62 +319,8 @@
                 term.write('\x1b[2J\x1b[H--- Compilation started... ---\r\n');
             });
 
-            // --- 5. DETACH/RE-ATTACH LOGIC (Unchanged) ---
+            // --- 5. DETACH/RE-ATTACH LOGIC ---
             const detachButton = document.getElementById('detach-button');
-            function reattachTerminal() { /* ... (code from previous step) ... */ }
-            detachButton.addEventListener('click', () => { /* ... (code from previous step) ... */ });
-
-            // --- 6. NEW: AI MODAL BUTTON LISTENERS ---
-            generateAiButton.addEventListener('click', () => {
-                aiModal.style.display = 'flex';
-            });
-            
-            closeModalButton.addEventListener('click', () => {
-                aiModal.style.display = 'none';
-            });
-            
-            runGenerationButton.addEventListener('click', () => {
-                const prompt = aiPromptTextarea.value;
-                if (!prompt) {
-                    alert('Please enter a description for your circuit.');
-                    return;
-                }
-                
-                if (!socket || socket.readyState !== WebSocket.OPEN) {
-                    term.write('\x1b[31mNot connected. Reconnecting...\x1b[0m\r\n');
-                    connectWebSocket();
-                    return;
-                }
-                
-                // Disable button to prevent spam
-                runGenerationButton.disabled = true;
-                runGenerationButton.textContent = 'Generating...';
-                
-                // Send a new message type to the backend
-                socket.send(JSON.stringify({ type: 'generate', prompt: prompt }));
-            });
-
-            // --- 7. NEW: DIAGRAM MODAL LISTENERS ---
-            generateDiagramButton.addEventListener('click', () => {
-                const code = editor.getValue();
-                if (!code) {
-                    alert('Please enter some Verilog code first.');
-                    return;
-                }
-                if (!socket || socket.readyState !== WebSocket.OPEN) {
-                    connectWebSocket();
-                    return;
-                }
-                term.write('\r\n--- 📊 Generating circuit diagram... ---\r\n');
-                socket.send(JSON.stringify({ type: 'generateDiagram', code: code }));
-            });
-
-            closeDiagramModalButton.addEventListener('click', () => {
-                diagramModal.style.display = 'none';
-                diagramImage.src = ''; // Clear image to save memory
-            });
-            
-            // (Re-pasting the detach logic since it was omitted)
             function reattachTerminal() {
                 if (!terminalWindow) return; 
                 const win = terminalWindow;
@@ -406,6 +368,54 @@
                     };
                     detachButton.textContent = 'Re-attach Terminal';
                 }
+            });
+
+            // --- 6. AI MODAL LISTENERS ---
+            generateAiButton.addEventListener('click', () => {
+                aiModal.style.display = 'flex';
+            });
+            
+            closeModalButton.addEventListener('click', () => {
+                aiModal.style.display = 'none';
+            });
+            
+            runGenerationButton.addEventListener('click', () => {
+                const prompt = aiPromptTextarea.value;
+                if (!prompt) {
+                    alert('Please enter a description for your circuit.');
+                    return;
+                }
+                
+                if (!socket || socket.readyState !== WebSocket.OPEN) {
+                    term.write('\x1b[31mNot connected. Reconnecting...\x1b[0m\r\n');
+                    connectWebSocket();
+                    return;
+                }
+                
+                runGenerationButton.disabled = true;
+                runGenerationButton.textContent = 'Generating...';
+                
+                socket.send(JSON.stringify({ type: 'generate', prompt: prompt }));
+            });
+            
+            // --- 7. This is the diagram button listener you were missing ---
+            generateDiagramButton.addEventListener('click', () => {
+                const code = editor.getValue();
+                if (!code) {
+                    alert('Please enter some Verilog code first.');
+                    return;
+                }
+                if (!socket || socket.readyState !== WebSocket.OPEN) {
+                    connectWebSocket();
+                    return;
+                }
+                term.write('\r\n--- 📊 Generating circuit diagram... ---\r\n');
+                socket.send(JSON.stringify({ type: 'generateDiagram', code: code }));
+            });
+            
+            closeDiagramModalButton.addEventListener('click', () => {
+                diagramModal.style.display = 'none';
+                diagramImage.src = ''; // Clear image to save memory
             });
 
         });
