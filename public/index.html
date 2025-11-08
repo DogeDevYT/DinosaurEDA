@@ -75,7 +75,6 @@
 
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm/css/xterm.css" />
     <script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.js"></script>
-    
     <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs/loader.js"></script>
 </head>
 
@@ -133,11 +132,7 @@
             term = new Terminal({
                 cursorBlink: true,
                 theme: { background: '#1a1a1a' }
-                // --- allowProposedApi REMOVED (was for clipboard) ---
             });
-
-            // --- CLIPBOARD ADDON LINE REMOVED ---
-            // term.loadAddon(new ClipboardAddon());
 
             // Open the terminal in its default container
             term.open(originalTerminalContainer);
@@ -170,7 +165,7 @@
                 
                 if (!socket || socket.readyState !== WebSocket.OPEN) {
                     term.write('\x1b[31mNot connected to backend. Attempting to reconnect...\x1b[0m\r\n');
-                    connectWebSocket(); // Try to reconnect
+                    connectWebSocket();
                     return;
                 }
 
@@ -181,7 +176,7 @@
                 };
                 socket.send(JSON.stringify(payload));
                 
-                term.write('\x1b[2J\x1b[H'); // Clears the terminal screen
+                term.write('\x1b[2J\x1b[H');
                 term.write('--- Compilation started... ---\r\n');
             });
 
@@ -189,24 +184,37 @@
             // --- 5. LOGIC FOR DETACH/RE-ATTACH BUTTON ---
             const detachButton = document.getElementById('detach-button');
             
+            // --- FIX: This function is now "idempotent" (safe) ---
             function reattachTerminal() {
-                if (!terminalWindow) return; 
+                // 1. Check if the window exists. If not, we're done.
+                if (!terminalWindow) {
+                    return; 
+                }
+                
+                // 2. Immediately grab the window and set the global to null
+                //    This prevents this function from ever running twice
+                //    on the same window.
+                const win = terminalWindow;
+                terminalWindow = null; 
 
+                // 3. Now, safely re-attach everything
                 originalTerminalContainer.style.display = 'block'; 
                 term.open(originalTerminalContainer); 
                 term.focus();
 
-                terminalWindow.onbeforeunload = null; 
-                terminalWindow.close();
-                terminalWindow = null;
+                // 4. Clean up the popup window
+                win.onbeforeunload = null; // Break the event loop
+                win.close();
                 
                 detachButton.textContent = 'Detach Terminal';
             }
             
             detachButton.addEventListener('click', () => {
                 if (terminalWindow) {
+                    // If window exists, run the re-attach logic
                     reattachTerminal();
                 } else {
+                    // If no window, run the detach logic
                     originalTerminalContainer.style.display = 'none'; 
                     
                     terminalWindow = window.open('', 'TerminalWindow', 'width=800,height=600');
@@ -240,6 +248,7 @@
                     term.open(newTermContainer);
                     term.focus();
                     
+                    // Set the listener for when the user closes the popup
                     terminalWindow.onbeforeunload = () => {
                         reattachTerminal();
                     };
