@@ -206,7 +206,7 @@
         <div id="diagram-modal-content" class="modal-content">
             <h3>Circuit Diagram</h3>
             <div id="diagram-image-container">
-                <img id="diagram-image" src="" alt="Circuit Diagram" />
+                <iframe id="diagram-svg-frame" style="width: 100%; height: 60vh; border: none; background-color: white;"></iframe>
             </div>
             <div class="modal-buttons">
                 <a id="diagram-download-link" href="#" download="circuit.png" class="control-button">Download PNG</a>
@@ -284,9 +284,12 @@
                                 
                             // --- This is the message handler you were missing ---
                             } else if (data.type === 'diagramResult') {
-                                if (data.imageUrl) {
-                                    diagramImage.src = data.imageUrl;
-                                    diagramDownloadLink.href = data.imageUrl;
+                                if (data.svgDataUri) {
+                                    // Set the iframe content
+                                    document.getElementById('diagram-svg-frame').src = data.svgDataUri;
+                                    // Set the download link
+                                    diagramDownloadLink.href = data.svgDataUri;
+                                    diagramDownloadLink.download = 'circuit.svg'; // Download as .svg
                                     diagramModal.style.display = 'flex';
                                 } else {
                                     term.write('\r\n--- ERROR: Failed to generate diagram. ---\r\n');
@@ -415,7 +418,7 @@
             
             closeDiagramModalButton.addEventListener('click', () => {
                 diagramModal.style.display = 'none';
-                diagramImage.src = ''; // Clear image to save memory
+                document.getElementById('diagram-svg-frame').src = 'about:blank'; // Clear svg to save memory
             });
 
         });

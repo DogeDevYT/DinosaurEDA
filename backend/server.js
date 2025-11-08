@@ -269,6 +269,7 @@ async function getGeminiVerilog(ws, userPrompt) {
 
 /**
  * --- 7. NEW: Diagram Generation Function ---
+ * (Re-written to use netlistsvg for proper logic symbols)
  */
 async function runDiagramGeneration(ws, verilogCode) {
     let tempDir = null;
@@ -279,28 +280,29 @@ async function runDiagramGeneration(ws, verilogCode) {
         await fs.mkdir(tempDir, { recursive: true });
         
         const codeFile = path.join(tempDir, 'design.v');
-        const dotFile = path.join(tempDir, 'diagram.dot');
-        const pngFile = path.join(tempDir, 'diagram.png');
+        const jsonFile = path.join(tempDir, 'netlist.json'); // Yosys output
+        const svgFile = path.join(tempDir, 'diagram.svg');  // netlistsvg output
 
         await fs.writeFile(codeFile, verilogCode);
 
-        // 2. Define Yosys (Docker) command to create .dot file
+        // 2. Define Yosys (Docker) command to create .json netlist
         const yosysCommand = 'yosys';
         const yosysArgs = [
             '-p', 
-            `read_verilog design.v; synth; show -format dot -prefix ${path.join('/app', 'diagram')}`
+            // 1. Read, 2. Synth, 3. Write JSON netlist
+            `read_verilog design.v; synth; write_json ${path.join('/app', 'netlist.json')}`
         ];
         const dockerArgs = [
             'run', '--rm', '-v', `${tempDir}:${'/app'}`,
-            '-w', '/app', DOCKER_IMAGE, yosysCommand, ...yosysArgs
+            '-w', '/app', DOCKAER_IMAGE, yosysCommand, ...yosysArgs
         ];
         
         // 3. Run Yosys (Docker) process
-        sendTerminalLog(ws, '--- 📊 [1/3] Synthesizing Verilog... ---\r\n');
+        sendTerminalLog(ws, '--- 📊 [1/3] Synthesizing Verilog to JSON netlist... ---\r\n');
         const yosysProcess = spawn('docker', dockerArgs);
         yosysProcess.stdin.end();
 
-        // Optional: Pipe Yosys output to terminal for debugging
+        // Pipe Yosys output to terminal for debugging
         yosysProcess.stdout.on('data', (data) => sendTerminalLog(ws, data.toString()));
         yosysProcess.stderr.on('data', (data) => sendTerminalLog(ws, data.toString()));
 
@@ -311,31 +313,37 @@ async function runDiagramGeneration(ws, verilogCode) {
             }
             sendTerminalLog(ws, `\r\n${ANSI_GREEN}--- 📊 [1/3] Synthesis complete. ---${ANSI_RESET}\r\n`);
             
-            // 4. Run Graphviz (dot) command on the host VM
-            sendTerminalLog(ws, '--- 📊 [2/3] Rendering diagram... ---\r\n');
-            const dotProcess = spawn('dot', ['-Tpng', dotFile, '-o', pngFile]);
+            // 4. Run netlistsvg command on the host VM
+            sendTerminalLog(ws, '--- 📊 [2/3] Rendering schematic with netlistsvg... ---\r\n');
+            const netlistProcess = spawn('netlistsvg', [jsonFile, '-o', svgFile]);
+            
+            // Handle errors from netlistsvg
+            let netlistError = "";
+            netlistProcess.stderr.on('data', (data) => {
+                netlistError += data.toString();
+            });
 
-            dotProcess.on('close', async (dotCode) => {
-                if (dotCode !== 0) {
-                    sendTerminalLog(ws, `\r\n${ANSI_RED}--- 📊 [ERROR] Graphviz (dot) failed. ---${ANSI_RESET}\r\n`);
+            netlistProcess.on('close', async (netlistCode) => {
+                if (netlistCode !== 0) {
+                    sendTerminalLog(ws, `\r\n${ANSI_RED}--- 📊 [ERROR] netlistsvg failed: ${netlistError} ---${ANSI_RESET}\r\n`);
                     return;
                 }
                 
-                // 5. Read the PNG file and convert to Base64
-                sendTerminalLog(ws, '--- 📊 [3/3] Sending image to browser... ---\r\n');
-                const imageBuffer = await fs.readFile(pngFile);
-                const base64Image = imageBuffer.toString('base64');
-                const dataUri = `data:image/png;base64,${base64Image}`;
+                // 5. Read the SVG file and convert to Base64
+                sendTerminalLog(ws, '--- 📊 [3/3] Sending SVG to browser... ---\r\n');
+                const svgBuffer = await fs.readFile(svgFile);
+                const base64Svg = svgBuffer.toString('base64');
+                const dataUri = `data:image/svg+xml;base64,${base64Svg}`;
 
                 // 6. Send the data URI to the frontend
-                sendJson(ws, { type: 'diagramResult', imageUrl: dataUri });
+                sendJson(ws, { type: 'diagramResult', svgDataUri: dataUri });
                 
                 // 7. Clean up
                 fs.rm(tempDir, { recursive: true, force: true });
             });
             
-            dotProcess.on('error', (err) => {
-                sendTerminalLog(ws, `\r\n${ANSI_RED}--- 📊 [ERROR] Failed to run Graphviz (dot). Is it installed? ---${ANSI_RESET}\r\n`);
+            netlistProcess.on('error', (err) => {
+                sendTerminalLog(ws, `\r\n${ANSI_RED}--- 📊 [ERROR] Failed to run netlistsvg. Is it installed? (sudo npm install -g netlistsvg) ---${ANSI_RESET}\r\n`);
             });
         });
         
