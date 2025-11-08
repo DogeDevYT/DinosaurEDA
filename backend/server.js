@@ -6,9 +6,8 @@ const { spawn } = require('child_process');
 const fs = require('fs/promises');
 const path = require('path');
 const crypto = require('crypto');
-// --- GEMINI: Import the Google AI SDK ---
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-
+// --- GEMINI: Import the *Vertex AI* SDK ---
+const { VertexAI } = require('@google-cloud/vertexai');
 
 // --- 2. Setup Server ---
 const app = express();
@@ -19,18 +18,56 @@ const wss = new WebSocketServer({ server, path: '/compile' });
 const PORT = 8080;
 const DOCKER_IMAGE = 'yosys-compiler-img';
 
-// --- GEMINI: Initialize the API Client ---
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+// --- GEMINI: Initialize Vertex AI ---
+// This will *automatically* use your VM's service account credentials.
+// !! Replace YOUR_PROJECT_ID_HERE with your GCloud Project ID !!
+// !! Replace us-central1 with the region your VM is in !!
+const vertex_ai = new VertexAI({
+  project: 'dinosaureda',
+  location: 'us-east1-d', 
+});
+const model = vertex_ai.getGenerativeModel({
+    model: 'gemini-1.0-pro', // Using a stable model name
+});
+
+
+// --- RATE LIMIT: In-memory store ---
+const clients = new Map();
+const RATE_LIMIT_WINDOW_MS = 1 * 60 * 1000; 
+const MAX_REQUESTS_PER_WINDOW = 10; 
 
 
 // --- 3. WebSocket Connection Logic ---
-wss.on('connection', (ws) => {
-    console.log('Client connected');
+wss.on('connection', (ws, req) => {
+    const ip = req.headers['cf-connecting-ip'] || req.socket.remoteAddress;
+    ws.ip = ip; 
+    console.log(`Client connected from IP: ${ip}`);
     ws.send('--- Welcome! Connected to compiler backend. ---\r\n');
 
     ws.on('message', async (message) => {
         try {
+            // --- RATE LIMIT: Check ---
+            const ip = ws.ip;
+            if (!ip) {
+                ws.send('--- ERROR: Could not identify your IP. ---\r\n');
+                return;
+            }
+            let record = clients.get(ip);
+            if (!record) {
+                record = { count: 1 };
+                clients.set(ip, record);
+                setTimeout(() => { clients.delete(ip); }, RATE_LIMIT_WINDOW_MS);
+            } else {
+                record.count++;
+            }
+            if (record.count > MAX_REQUESTS_PER_WINDOW) {
+                console.warn(`Rate limit exceeded for IP: ${ip}`);
+                ws.send('--- ERROR: Too many compile requests. ---\r\n');
+                ws.send('Please wait 1 minute and try again.\r\n');
+                return;
+            }
+
+            // --- Original code proceeds ---
             const data = JSON.parse(message.toString());
             if (data.code) {
                 await runInSandbox(ws, data.code);
@@ -41,21 +78,17 @@ wss.on('connection', (ws) => {
         }
     });
 
-    ws.on('close', () => {
-        console.log('Client disconnected');
-    });
-    ws.on('error', (err) => {
-        console.error('WebSocket error:', err);
-    });
+    ws.on('close', () => console.log(`Client disconnected from IP: ${ws.ip}`));
+    ws.on('error', (err) => console.error('WebSocket error:', err));
 });
 
 /**
  * --- 4. The Secure Sandbox Function ---
+ * (This function is unchanged)
  */
 async function runInSandbox(ws, code) {
     let heartbeatInterval = null;
     let tempDir = null;
-    // --- GEMINI: Create a buffer to store all output ---
     let fullOutput = "";
 
     try {
@@ -64,19 +97,16 @@ async function runInSandbox(ws, code) {
                 ws.send("...working...\r\n");
             }
         }, 2000);
-        ws.send('--- DEBUG: runInSandbox started. ---\r\n');
-
+        
         const tempId = crypto.randomBytes(16).toString('hex');
         tempDir = path.join(__dirname, 'temp', tempId); 
         await fs.mkdir(tempDir, { recursive: true });
-        ws.send(`--- DEBUG: tempDir created. ---\r\n`);
 
         const codeFile = path.join(tempDir, 'design.v');
         const hostPath = tempDir;
         const containerPath = '/app';
 
         await fs.writeFile(codeFile, code);
-        ws.send('--- DEBUG: Code file written. ---\r\n');
 
         const yosysCommand = 'yosys';
         const yosysArgs = [
@@ -87,28 +117,24 @@ async function runInSandbox(ws, code) {
             'run', '--rm', '-v', `${hostPath}:${containerPath}`,
             '-w', containerPath, DOCKER_IMAGE, yosysCommand, ...yosysArgs
         ];
-        ws.send('--- DEBUG: Docker command prepared. Spawning process... ---\r\n');
 
         const compilerProcess = spawn('docker', dockerArgs);
         compilerProcess.stdin.end();
 
-        // --- GEMINI: Stream output to user AND save to buffer ---
         compilerProcess.stdout.on('data', (data) => {
             ws.send(data.toString());
-            fullOutput += data.toString(); // Save to buffer
+            fullOutput += data.toString();
         });
         compilerProcess.stderr.on('data', (data) => {
             ws.send(data.toString());
-            fullOutput += data.toString(); // Save to buffer
+            fullOutput += data.toString();
         });
 
-        // --- GEMINI: Make this function 'async' to use 'await' ---
         compilerProcess.on('close', async (code) => {
             clearInterval(heartbeatInterval);
             ws.send(`\r\n--- Compilation finished (exit code ${code}) ---\r\n`);
             
-            // --- GEMINI: Call our new function to get the explanation ---
-            await getGeminiDescription(ws, fullOutput, code);
+            await getGeminiDescription(ws, fullOutput, code); // Call Gemini
 
             fs.rm(tempDir, { recursive: true, force: true })
                 .catch(err => console.error('Failed to clean up temp dir:', err));
@@ -132,14 +158,13 @@ async function runInSandbox(ws, code) {
 }
 
 /**
- * --- 5. NEW: Gemini Explanation Function ---
- * This function takes the Yosys output and gets a Gemini explanation.
+ * --- 5. GEMINI: Updated Explanation Function ---
+ * This function now uses the Vertex AI SDK syntax.
  */
 async function getGeminiDescription(ws, yosysOutput, exitCode) {
     try {
         ws.send('\r\n--- 🤖 Gemini is thinking... ---\r\n');
 
-        // Create a strong prompt for Gemini
         const successString = (exitCode === 0) ? "succeeded" : "failed";
         const prompt = `
             The following is a terminal log from the Yosys Verilog synthesizer. The compilation ${successString} with exit code ${exitCode}.
@@ -156,12 +181,16 @@ async function getGeminiDescription(ws, yosysOutput, exitCode) {
             ---
         `;
 
-        // Call the API
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        const text = response.text();
+        // --- GEMINI: New Vertex AI request format ---
+        const request = {
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        };
+        
+        const result = await model.generateContent(request);
+        const response = result.response;
+        // This is how you safely get the text from a Vertex AI response
+        const text = response.candidates[0].content.parts[0].text;
 
-        // Send the explanation
         ws.send('\r\n--- 🤖 Gemini\'s Explanation ---\r\n');
         ws.send(text);
         ws.send('\r\n--------------------------------\r\n');
