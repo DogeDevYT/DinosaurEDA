@@ -19,28 +19,25 @@ const PORT = 8080;
 const DOCKER_IMAGE = 'yosys-compiler-img';
 
 // --- GEMINI: Initialize Vertex AI ---
-// This will *automatically* use your VM's service account credentials.
 // !! Replace YOUR_PROJECT_ID_HERE with your GCloud Project ID !!
 // !! Replace us-central1 with the region your VM is in !!
 const vertex_ai = new VertexAI({
   project: 'dinosaureda',
-  location: 'us-east1-d', 
+  location: 'us-east1',
 });
 const model = vertex_ai.getGenerativeModel({
-    model: 'gemini-1.0-pro', // Using a stable model name
+    model: 'gemini-2.5-flash',
 });
-
 
 // --- RATE LIMIT: In-memory store ---
 const clients = new Map();
-const RATE_LIMIT_WINDOW_MS = 1 * 60 * 1000; 
-const MAX_REQUESTS_PER_WINDOW = 10; 
-
+const RATE_LIMIT_WINDOW_MS = 1 * 60 * 1000;
+const MAX_REQUESTS_PER_WINDOW = 10;
 
 // --- 3. WebSocket Connection Logic ---
 wss.on('connection', (ws, req) => {
     const ip = req.headers['cf-connecting-ip'] || req.socket.remoteAddress;
-    ws.ip = ip; 
+    ws.ip = ip;
     console.log(`Client connected from IP: ${ip}`);
     ws.send('--- Welcome! Connected to compiler backend. ---\r\n');
 
@@ -66,8 +63,6 @@ wss.on('connection', (ws, req) => {
                 ws.send('Please wait 1 minute and try again.\r\n');
                 return;
             }
-
-            // --- Original code proceeds ---
             const data = JSON.parse(message.toString());
             if (data.code) {
                 await runInSandbox(ws, data.code);
@@ -84,7 +79,6 @@ wss.on('connection', (ws, req) => {
 
 /**
  * --- 4. The Secure Sandbox Function ---
- * (This function is unchanged)
  */
 async function runInSandbox(ws, code) {
     let heartbeatInterval = null;
@@ -99,7 +93,7 @@ async function runInSandbox(ws, code) {
         }, 2000);
 
         const tempId = crypto.randomBytes(16).toString('hex');
-        tempDir = path.join(__dirname, 'temp', tempId); 
+        tempDir = path.join(__dirname, 'temp', tempId);
         await fs.mkdir(tempDir, { recursive: true });
 
         const codeFile = path.join(tempDir, 'design.v');
@@ -133,9 +127,7 @@ async function runInSandbox(ws, code) {
         compilerProcess.on('close', async (code) => {
             clearInterval(heartbeatInterval);
             ws.send(`\r\n--- Compilation finished (exit code ${code}) ---\r\n`);
-
-            await getGeminiDescription(ws, fullOutput, code); // Call Gemini
-
+            await getGeminiDescription(ws, fullOutput, code);
             fs.rm(tempDir, { recursive: true, force: true })
                 .catch(err => console.error('Failed to clean up temp dir:', err));
         });
@@ -159,7 +151,6 @@ async function runInSandbox(ws, code) {
 
 /**
  * --- 5. GEMINI: Updated Explanation Function ---
- * This function now uses the Vertex AI SDK syntax.
  */
 async function getGeminiDescription(ws, yosysOutput, exitCode) {
     try {
@@ -181,7 +172,6 @@ async function getGeminiDescription(ws, yosysOutput, exitCode) {
             ---
         `;
 
-        // --- GEMINI: New Vertex AI request format ---
         const request = {
             contents: [{ role: 'user', parts: [{ text: prompt }] }],
         };
@@ -191,7 +181,7 @@ async function getGeminiDescription(ws, yosysOutput, exitCode) {
         // This is how you safely get the text from a Vertex AI response
         const text = response.candidates[0].content.parts[0].text;
 
-        ws.send('\r\n--- 🤖 Gemini\'s Explanation ---\r\n');
+        ws.send('\r\n--- 🤖 Gemin\'s Explanation ---\r\n');
         ws.send(text);
         ws.send('\r\n--------------------------------\r\n');
 
