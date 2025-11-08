@@ -17,6 +17,12 @@ const wss = new WebSocketServer({ server, path: '/compile' });
 const PORT = 8080;
 const DOCKER_IMAGE = 'yosys-compiler-img';
 
+// -- ANSI COLOR CODES --
+const ANSI_BLUE = '\x1b[34m';
+const ANSI_GREEN = '\x1b[32m'; 
+const ANSI_RED = '\x1b[31m';   
+const ANSI_RESET = '\x1b[0m';
+
 // --- GEMINI: Initialize Vertex AI ---
 const vertex_ai = new VertexAI({
   project: 'dinosaureda', // !! Replace with your Project ID
@@ -131,7 +137,15 @@ async function runInSandbox(ws, code) {
 
         compilerProcess.on('close', async (code) => {
             clearInterval(heartbeatInterval);
-            sendTerminalLog(ws, `\r\n--- Compilation finished (exit code ${code}) ---\r\n`);
+
+            if (code === 0) {
+                // Success
+                sendTerminalLog(ws, `\r\n${ANSI_GREEN}--- Compilation finished (exit code ${code}) ---${ANSI_RESET}\r\n`);
+            } else {
+                // Failure
+                sendTerminalLog(ws, `\r\n${ANSI_RED}--- Compilation finished (exit code ${code}) ---${ANSI_RESET}\r\n`);
+            }
+
             await getGeminiDescription(ws, fullOutput, code); // Explain the output
             fs.rm(tempDir, { recursive: true, force: true })
                 .catch(err => console.error('Failed to clean up temp dir:', err));
@@ -139,14 +153,14 @@ async function runInSandbox(ws, code) {
 
         compilerProcess.on('error', (err) => {
             clearInterval(heartbeatInterval);
-            sendTerminalLog(ws, `\r\n--- FATAL: Failed to start compiler: ${err.message} ---\r\n`);
+            sendTerminalLog(ws, `\r\n${ANSI_RED}--- FATAL: Failed to start compiler: ${err.message} ---${ANSI_RESET}\r\n`);
             fs.rm(tempDir, { recursive: true, force: true })
                 .catch(err => console.error('Failed to clean up temp dir:', err));
         });
 
     } catch (err) {
         if (heartbeatInterval) clearInterval(heartbeatInterval);
-        sendTerminalLog(ws, `\r\n--- FATAL Server-side error: ${err.message} ---\r\n`);
+        sendTerminalLog(ws, `\r\n${ANSI_RED}--- FATAL Server-side error: ${err.message} ---${ANSI_RESET}\r\n`);
         if (tempDir) {
             await fs.rm(tempDir, { recursive: true, force: true })
                  .catch(err => console.error('Failed to clean up temp dir:', err));
@@ -178,12 +192,12 @@ async function getGeminiDescription(ws, yosysOutput, exitCode) {
         const request = { contents: [{ role: 'user', parts: [{ text: prompt }] }], };
         const result = await model.generateContent(request);
         const text = result.response.candidates[0].content.parts[0].text;
-        sendTerminalLog(ws, '\r\n--- 🤖 Gemini\'s Explanation ---\r\n');
-        sendTerminalLog(ws, text);
-        sendTerminalLog(ws, '\r\n--------------------------------\r\n');
+        sendTerminalLog(ws, `\r\n${ANSI_BLUE}--- 🤖 Gemini's Explanation ---${ANSI_RESET}\r\n`);
+        sendTerminalLog(ws, `${ANSI_BLUE}${text}${ANSI_RESET}`);
+        sendTerminalLog(ws, `\r\n${ANSI_BLUE}--------------------------------${ANSI_RESET}\r\n`);
     } catch (error) {
         console.error("Gemini API Error (Description):", error);
-        sendTerminalLog(ws, '\r\n--- 🤖 Gemini Error: Could not get explanation. ---\r\n');
+        sendTerminalLog(ws, `\r\n${ANSI_BLUE}--- 🤖 Gemini Error: Could not get explanation. ---${ANSI_RESET}\r\n`);
     }
 }
 
@@ -193,7 +207,7 @@ async function getGeminiDescription(ws, yosysOutput, exitCode) {
 async function getGeminiVerilog(ws, userPrompt) {
     try {
         // Send log to terminal so user sees activity
-        sendTerminalLog(ws, '\r\n--- 🤖 Gemini is generating Verilog code... ---\r\n');
+        sendTerminalLog(ws, `\r\n${ANSI_BLUE}--- 🤖 Gemini is generating Verilog code... ---${ANSI_RESET}\r\n`);
 
         // Create a strong prompt for Verilog generation
         const prompt = `
@@ -222,11 +236,11 @@ async function getGeminiVerilog(ws, userPrompt) {
         if (ws.readyState === ws.OPEN) {
             ws.send(JSON.stringify({ type: 'generationResult', code: code }));
         }
-        sendTerminalLog(ws, '--- 🤖 Verilog code generated successfully. ---\r\n');
+        sendTerminalLog(ws, `${ANSI_BLUE}--- 🤖 Verilog code generated successfully. ---${ANSI_RESET}\r\n`);
 
     } catch (error) {
         console.error("Gemini API Error (Generation):", error);
-        sendTerminalLog(ws, '\r\n--- 🤖 Gemini Error: Could not generate code. ---\r\n');
+        sendTerminalLog(ws, `\r\n${ANSI_BLUE}--- 🤖 Gemini Error: Could not generate code. ---${ANSI_RESET}\r\n`);
     }
 }
 
