@@ -60,7 +60,6 @@
             width: 100%;
             border-bottom: 2px solid #333;
             flex-grow: 6;
-            /* --- FIX: Add transition for smoother resize --- */
             transition: all 0.2s ease;
         }
 
@@ -69,15 +68,24 @@
             background-color: #1a1a1a;
             flex-grow: 4;
             transition: all 0.2s ease;
+            /* --- FIX: We need this to make sure xterm resizes --- */
+            position: relative; 
         }
 
-        .xterm .xterm-viewport {
-            width: 100% !important;
+        /* --- FIX: Style the xterm element itself --- */
+        .xterm {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
         }
+
     </style>
 
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm/css/xterm.css" />
     <script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit/lib/xterm-addon-fit.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs/loader.js"></script>
 </head>
 
@@ -102,14 +110,16 @@
             
             let terminalWindow = null; 
             let originalTerminalContainer = document.getElementById('terminal-container');
-            // --- NEW: Get the editor container ---
             let editorContainer = document.getElementById('editor-container');
+            
+            // --- NEW: Add the FitAddon for resizing ---
+            const fitAddon = new FitAddon.FitAddon();
 
 
             // --- 1. INITIALIZE MONACO EDITOR ---
             require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs' }});
             require(['vs/editor/editor.main'], () => {
-                editor = monaco.editor.create(editorContainer, { // Use variable here
+                editor = monaco.editor.create(editorContainer, {
                     value: [
                         '// --- Welcome to your Web IDE ---',
                         'module top (',
@@ -131,7 +141,11 @@
                     language: 'verilog',
                     theme: 'vs-dark'
                 });
-                window.addEventListener('resize', () => editor.layout());
+                window.addEventListener('resize', () => {
+                    editor.layout();
+                    // --- NEW: Resize terminal too ---
+                    fitAddon.fit();
+                });
             });
 
             // --- 2. INITIALIZE XTERM.JS TERMINAL ---
@@ -140,7 +154,13 @@
                 theme: { background: '#1a1a1a' }
             });
 
+            // --- NEW: Load the resize addon ---
+            term.loadAddon(fitAddon);
+
+            // --- FIX: term.open() is ONLY CALLED ONCE ---
             term.open(originalTerminalContainer);
+            fitAddon.fit(); // Make it fill the container
+            
             term.write('Welcome to the HDL Compiler Terminal!\r\n');
             term.write('Connecting to backend server...\r\n');
 
@@ -163,48 +183,38 @@
 
             // --- 4. HOOK UP "RUN" BUTTON ---
             document.getElementById('compile-button').addEventListener('click', () => {
-                if (!editor) {
-                    alert('Editor is not initialized yet.');
-                    return;
-                }
-                
+                if (!editor) return;
                 if (!socket || socket.readyState !== WebSocket.OPEN) {
-                    term.write('\x1b[31mNot connected to backend. Attempting to reconnect...\x1b[0m\r\n');
                     connectWebSocket();
                     return;
                 }
-
                 const code = editor.getValue();
-                const payload = {
-                    language: 'verilog',
-                    code: code
-                };
-                socket.send(JSON.stringify(payload));
-                
-                term.write('\x1b[2J\x1b[H');
-                term.write('--- Compilation started... ---\r\n');
+                socket.send(JSON.stringify({ language: 'verilog', code: code }));
+                term.write('\x1b[2J\x1b[H--- Compilation started... ---\r\n');
             });
 
 
-            // --- 5. LOGIC FOR DETACH/RE-ATTACH BUTTON ---
+            // --- 5. LOGIC FOR DETACH/RE-ATTACH BUTTON (COMPLETELY REWRITTEN) ---
             const detachButton = document.getElementById('detach-button');
             
             function reattachTerminal() {
-                if (!terminalWindow) {
-                    return; 
-                }
+                if (!terminalWindow) return; 
                 
                 const win = terminalWindow;
                 terminalWindow = null; 
 
-                // --- FIX: Restore the container's flexible properties ---
+                // --- FIX: Move the terminal's DOM back ---
+                originalTerminalContainer.appendChild(term.element);
+                
+                // Restore container styles
                 originalTerminalContainer.style.flexGrow = '4';
                 originalTerminalContainer.style.height = '';
                 originalTerminalContainer.style.overflow = '';
-                // --- NEW: Restore editor's flex-grow ---
                 editorContainer.style.flexGrow = '6';
-                
-                term.open(originalTerminalContainer); 
+
+                // Resize both components
+                fitAddon.fit();
+                editor.layout();
                 term.focus();
 
                 win.onbeforeunload = null;
@@ -217,21 +227,20 @@
                 if (terminalWindow) {
                     reattachTerminal();
                 } else {
-                    // --- FIX: Robustly hide the terminal container ---
+                    // --- FIX: Hide the container ---
                     originalTerminalContainer.style.flexGrow = '0';
                     originalTerminalContainer.style.height = '0';
                     originalTerminalContainer.style.overflow = 'hidden';
-                    // --- NEW: Make editor fill the space ---
                     editorContainer.style.flexGrow = '1';
                     
                     terminalWindow = window.open('', 'TerminalWindow', 'width=800,height=600');
                     if (!terminalWindow) {
                         alert('Popup blocked. Please allow popups for this site.');
-                        // Call reattach to reset the layout if popup fails
-                        reattachTerminal(); 
+                        reattachTerminal(); // Reset layout
                         return;
                     }
                     
+                    // Setup new window
                     terminalWindow.document.head.innerHTML = `
                         <title>Terminal</title>
                         <style>
@@ -239,21 +248,26 @@
                                 margin: 0; padding: 0; height: 100%; width: 100%; 
                                 overflow: hidden; background-color: #1a1a1a; 
                             }
+                            /* --- FIX: Make terminal fill popup --- */
+                            #popup-term-container { height: 100%; width: 100%; }
+                            .xterm { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
                         </style>
                     `;
-                    
                     const xtermCss = terminalWindow.document.createElement('link');
                     xtermCss.rel = 'stylesheet';
                     xtermCss.href = 'https://cdn.jsdelivr.net/npm/xterm/css/xterm.css';
                     terminalWindow.document.head.appendChild(xtermCss);
                     
                     const newTermContainer = terminalWindow.document.createElement('div');
-                    newTermContainer.id = 'new-terminal-container';
-                    newTermContainer.style.height = '100%';
-                    newTermContainer.style.width = '100%';
+                    newTermContainer.id = 'popup-term-container';
                     terminalWindow.document.body.appendChild(newTermContainer);
-                    
-                    term.open(newTermContainer);
+
+                    // --- FIX: Move the terminal's DOM to the popup ---
+                    newTermContainer.appendChild(term.element);
+
+                    // Resize editor and terminal in their new homes
+                    editor.layout();
+                    fitAddon.fit();
                     term.focus();
                     
                     terminalWindow.onbeforeunload = () => {
