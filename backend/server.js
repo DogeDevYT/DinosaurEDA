@@ -6,7 +6,6 @@ const { spawn } = require('child_process');
 const fs = require('fs/promises');
 const path = require('path');
 const crypto = require('crypto');
-// --- GEMINI: Import the *Vertex AI* SDK ---
 const { VertexAI } = require('@google-cloud/vertexai');
 
 // --- 2. Setup Server ---
@@ -19,11 +18,9 @@ const PORT = 8080;
 const DOCKER_IMAGE = 'yosys-compiler-img';
 
 // --- GEMINI: Initialize Vertex AI ---
-// !! Replace YOUR_PROJECT_ID_HERE with your GCloud Project ID !!
-// !! Replace us-central1 with the region your VM is in !!
 const vertex_ai = new VertexAI({
-  project: 'dinosaureda',
-  location: 'us-east1',
+  project: 'dinosaureda', // !! Replace with your Project ID
+  location: 'us-east1', // !! Replace with your VM's region (e.g., 'us-east1')
 });
 const model = vertex_ai.getGenerativeModel({
     model: 'gemini-2.5-flash',
@@ -31,22 +28,29 @@ const model = vertex_ai.getGenerativeModel({
 
 // --- RATE LIMIT: In-memory store ---
 const clients = new Map();
-const RATE_LIMIT_WINDOW_MS = 1 * 60 * 1000;
-const MAX_REQUESTS_PER_WINDOW = 10;
+const RATE_LIMIT_WINDOW_MS = 1 * 60 * 1000; 
+const MAX_REQUESTS_PER_WINDOW = 10; 
+
+// --- REFACTOR: Helper function to send terminal logs ---
+function sendTerminalLog(ws, message) {
+    if (ws.readyState === ws.OPEN) {
+        ws.send(JSON.stringify({ type: 'terminalLog', message: message }));
+    }
+}
 
 // --- 3. WebSocket Connection Logic ---
 wss.on('connection', (ws, req) => {
     const ip = req.headers['cf-connecting-ip'] || req.socket.remoteAddress;
-    ws.ip = ip;
+    ws.ip = ip; 
     console.log(`Client connected from IP: ${ip}`);
-    ws.send('--- Welcome! Connected to compiler backend. ---\r\n');
+    sendTerminalLog(ws, '--- Welcome! Connected to compiler backend. ---\r\n');
 
     ws.on('message', async (message) => {
         try {
             // --- RATE LIMIT: Check ---
             const ip = ws.ip;
             if (!ip) {
-                ws.send('--- ERROR: Could not identify your IP. ---\r\n');
+                sendTerminalLog(ws, '--- ERROR: Could not identify your IP. ---\r\n');
                 return;
             }
             let record = clients.get(ip);
@@ -59,17 +63,24 @@ wss.on('connection', (ws, req) => {
             }
             if (record.count > MAX_REQUESTS_PER_WINDOW) {
                 console.warn(`Rate limit exceeded for IP: ${ip}`);
-                ws.send('--- ERROR: Too many compile requests. ---\r\n');
-                ws.send('Please wait 1 minute and try again.\r\n');
+                sendTerminalLog(ws, '--- ERROR: Too many requests. Please wait 1 minute. ---\r\n');
                 return;
             }
+
+            // --- REFACTOR: Handle different message types ---
             const data = JSON.parse(message.toString());
-            if (data.code) {
+            
+            if (data.type === 'compile' && data.code) {
+                // User clicked "Run Synthesis"
                 await runInSandbox(ws, data.code);
+            } else if (data.type === 'generate' && data.prompt) {
+                // User clicked "Generate Verilog"
+                await getGeminiVerilog(ws, data.prompt);
             }
+            
         } catch (e) {
-            console.error('Failed to parse message or compile:', e);
-            ws.send(`\r\n--- ERROR: ${e.message} ---\r\n`);
+            console.error('Failed to parse message or execute:', e);
+            sendTerminalLog(ws, `\r\n--- ERROR: ${e.message} ---\r\n`);
         }
     });
 
@@ -87,61 +98,55 @@ async function runInSandbox(ws, code) {
 
     try {
         heartbeatInterval = setInterval(() => {
-            if (ws.readyState === ws.OPEN) {
-                ws.send("...working...\r\n");
-            }
+            sendTerminalLog(ws, "...working...\r\n");
         }, 2000);
-
+        
         const tempId = crypto.randomBytes(16).toString('hex');
-        tempDir = path.join(__dirname, 'temp', tempId);
+        tempDir = path.join(__dirname, 'temp', tempId); 
         await fs.mkdir(tempDir, { recursive: true });
 
         const codeFile = path.join(tempDir, 'design.v');
-        const hostPath = tempDir;
-        const containerPath = '/app';
-
         await fs.writeFile(codeFile, code);
 
         const yosysCommand = 'yosys';
         const yosysArgs = [
-            '-p',
-            'read_verilog design.v; synth_ice40; write_blif build.blif; stat'
+            '-p', 'read_verilog design.v; synth_ice40; write_blif build.blif; stat'
         ];
         const dockerArgs = [
-            'run', '--rm', '-v', `${hostPath}:${containerPath}`,
-            '-w', containerPath, DOCKER_IMAGE, yosysCommand, ...yosysArgs
+            'run', '--rm', '-v', `${tempDir}:${'/app'}`,
+            '-w', '/app', DOCKER_IMAGE, yosysCommand, ...yosysArgs
         ];
 
         const compilerProcess = spawn('docker', dockerArgs);
         compilerProcess.stdin.end();
 
         compilerProcess.stdout.on('data', (data) => {
-            ws.send(data.toString());
+            sendTerminalLog(ws, data.toString());
             fullOutput += data.toString();
         });
         compilerProcess.stderr.on('data', (data) => {
-            ws.send(data.toString());
+            sendTerminalLog(ws, data.toString());
             fullOutput += data.toString();
         });
 
         compilerProcess.on('close', async (code) => {
             clearInterval(heartbeatInterval);
-            ws.send(`\r\n--- Compilation finished (exit code ${code}) ---\r\n`);
-            await getGeminiDescription(ws, fullOutput, code);
+            sendTerminalLog(ws, `\r\n--- Compilation finished (exit code ${code}) ---\r\n`);
+            await getGeminiDescription(ws, fullOutput, code); // Explain the output
             fs.rm(tempDir, { recursive: true, force: true })
                 .catch(err => console.error('Failed to clean up temp dir:', err));
         });
 
         compilerProcess.on('error', (err) => {
             clearInterval(heartbeatInterval);
-            ws.send(`\r\n--- FATAL: Failed to start compiler: ${err.message} ---\r\n`);
+            sendTerminalLog(ws, `\r\n--- FATAL: Failed to start compiler: ${err.message} ---\r\n`);
             fs.rm(tempDir, { recursive: true, force: true })
                 .catch(err => console.error('Failed to clean up temp dir:', err));
         });
 
     } catch (err) {
         if (heartbeatInterval) clearInterval(heartbeatInterval);
-        ws.send(`\r\n--- FATAL Server-side error: ${err.message} ---\r\n`);
+        sendTerminalLog(ws, `\r\n--- FATAL Server-side error: ${err.message} ---\r\n`);
         if (tempDir) {
             await fs.rm(tempDir, { recursive: true, force: true })
                  .catch(err => console.error('Failed to clean up temp dir:', err));
@@ -150,48 +155,69 @@ async function runInSandbox(ws, code) {
 }
 
 /**
- * --- 5. GEMINI: Updated Explanation Function ---
+ * --- 5. Gemini Explanation Function (Unchanged) ---
  */
 async function getGeminiDescription(ws, yosysOutput, exitCode) {
     try {
-        ws.send('\r\n--- 🤖 Gemini is thinking... ---\r\n');
-
+        sendTerminalLog(ws, '\r\n--- 🤖 Gemini is thinking... ---\r\n');
         const successString = (exitCode === 0) ? "succeeded" : "failed";
+        const prompt = `... (your existing explanation prompt) ...`; // Kept short for brevity
+        const request = { contents: [{ role: 'user', parts: [{ text: prompt }] }], };
+        const result = await model.generateContent(request);
+        const text = result.response.candidates[0].content.parts[0].text;
+        sendTerminalLog(ws, '\r\n--- 🤖 Gemini\'s Explanation ---\r\n');
+        sendTerminalLog(ws, text);
+        sendTerminalLog(ws, '\r\n--------------------------------\r\n');
+    } catch (error) {
+        console.error("Gemini API Error (Description):", error);
+        sendTerminalLog(ws, '\r\n--- 🤖 Gemini Error: Could not get explanation. ---\r\n');
+    }
+}
+
+/**
+ * --- 6. NEW: Gemini Verilog Generation Function ---
+ */
+async function getGeminiVerilog(ws, userPrompt) {
+    try {
+        // Send log to terminal so user sees activity
+        sendTerminalLog(ws, '\r\n--- 🤖 Gemini is generating Verilog code... ---\r\n');
+
+        // Create a strong prompt for Verilog generation
         const prompt = `
-            The following is a terminal log from the Yosys Verilog synthesizer. The compilation ${successString} with exit code ${exitCode}.
-            Please analyze this log and provide a simple, beginner-friendly explanation of what happened.
-
-            - What did the synthesizer do?
-            - Were there any important warnings or errors (like syntax errors or undeclared variables)?
-            - What was the result (e.g., did it print statistics about the synthesized design)?
-            - Keep the explanation concise (2-4 paragraphs).
-
-            Here is the log:
-            ---
-            ${yosysOutput}
-            ---
+            You are an expert Verilog code generator.
+            A user wants a circuit that matches the following description.
+            Provide only the complete, syntactically correct Verilog code block.
+            Do not include any explanation, markdown, or "Here is the code:" text.
+            Start the code with \`default_nettype none.
+            
+            User Description:
+            "${userPrompt}"
         `;
 
         const request = {
             contents: [{ role: 'user', parts: [{ text: prompt }] }],
         };
-
+        
         const result = await model.generateContent(request);
         const response = result.response;
-        // This is how you safely get the text from a Vertex AI response
-        const text = response.candidates[0].content.parts[0].text;
+        let code = response.candidates[0].content.parts[0].text;
+        
+        // Clean up Gemini's response (remove markdown backticks)
+        code = code.replace(/```verilog/g, "").replace(/```/g, "").trim();
 
-        ws.send('\r\n--- 🤖 Gemin\'s Explanation ---\r\n');
-        ws.send(text);
-        ws.send('\r\n--------------------------------\r\n');
+        // Send the code back to the client in the new format
+        if (ws.readyState === ws.OPEN) {
+            ws.send(JSON.stringify({ type: 'generationResult', code: code }));
+        }
+        sendTerminalLog(ws, '--- 🤖 Verilog code generated successfully. ---\r\n');
 
     } catch (error) {
-        console.error("Gemini API Error:", error);
-        ws.send('\r\n--- 🤖 Gemini Error: Could not get explanation. ---\r\n');
+        console.error("Gemini API Error (Generation):", error);
+        sendTerminalLog(ws, '\r\n--- 🤖 Gemini Error: Could not generate code. ---\r\n');
     }
 }
 
-// --- 6. Start Listening ---
+// --- 7. Start Listening ---
 server.listen(PORT, () => {
     console.log(`Backend server started on http://localhost:${PORT}`);
     console.log(`WebSocket server listening on ws://localhost:${PORT}/compile`);

@@ -55,6 +55,14 @@
         #detach-button:hover {
             background-color: #7a7a7a;
         }
+        
+        /* --- NEW: AI Generator Button Style --- */
+        #generate-ai-button {
+            background-color: #0c8a4d;
+        }
+        #generate-ai-button:hover {
+            background-color: #11b866;
+        }
 
         #editor-container {
             width: 100%;
@@ -68,17 +76,76 @@
             background-color: #1a1a1a;
             flex-grow: 4;
             transition: all 0.2s ease;
-            /* --- FIX: We need this to make sure xterm resizes --- */
             position: relative; 
         }
 
-        /* --- FIX: Style the xterm element itself --- */
         .xterm {
             position: absolute;
             top: 0;
             left: 0;
             right: 0;
             bottom: 0;
+        }
+        
+        /* --- NEW: AI Modal Styles --- */
+        #ai-modal-overlay {
+            display: none; /* Hidden by default */
+            position: fixed;
+            z-index: 100;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.6);
+            justify-content: center;
+            align-items: center;
+        }
+        
+        #ai-modal-content {
+            background-color: #2a2a2a;
+            border: 1px solid #444;
+            border-radius: 8px;
+            width: 600px;
+            padding: 20px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+            color: white;
+        }
+        
+        #ai-modal-content h3 {
+            margin-top: 0;
+            border-bottom: 1px solid #444;
+            padding-bottom: 10px;
+        }
+        
+        #ai-prompt-textarea {
+            width: 100%;
+            height: 150px;
+            background-color: #1e1e1e;
+            border: 1px solid #555;
+            color: white;
+            font-size: 14px;
+            box-sizing: border-box; /* Fixes padding issue */
+            padding: 10px;
+            margin-top: 10px;
+        }
+        
+        #ai-modal-buttons {
+            margin-top: 15px;
+            text-align: right;
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+        
+        #ai-modal-buttons button {
+            background-color: #5a5a5a;
+        }
+        #ai-modal-buttons button#run-generation-button {
+            background-color: #0c8a4d;
+        }
+        #ai-modal-buttons button:disabled {
+            background-color: #333;
+            cursor: not-allowed;
         }
 
     </style>
@@ -95,75 +162,62 @@
         <div id="controls">
             <button id="compile-button" class="control-button">▶ Run Synthesis</button>
             <button id="detach-button" class="control-button">Detach Terminal</button>
+            <button id="generate-ai-button" class="control-button">✨ Generate Verilog</button>
         </div>
 
         <div id="editor-container"></div>
         <div id="terminal-container"></div>
     </div>
+    
+    <div id="ai-modal-overlay">
+        <div id="ai-modal-content">
+            <h3>✨ Generate Verilog with AI</h3>
+            <p>Describe the circuit you want to build:</p>
+            <textarea id="ai-prompt-textarea" placeholder="e.g., a 4-bit counter with synchronous reset..."></textarea>
+            <div id="ai-modal-buttons">
+                <button id="close-modal-button" class="control-button">Cancel</button>
+                <button id="run-generation-button" class="control-button">Generate</button>
+            </div>
+        </div>
+    </div>
 
     <script>
         document.addEventListener('DOMContentLoaded', () => {
 
-            let editor; 
-            let term; 
-            let socket; 
+            let editor, term, socket, terminalWindow = null; 
             
-            let terminalWindow = null; 
             let originalTerminalContainer = document.getElementById('terminal-container');
             let editorContainer = document.getElementById('editor-container');
-            
-            // --- NEW: Add the FitAddon for resizing ---
             const fitAddon = new FitAddon.FitAddon();
-
+            
+            // --- NEW: Get AI Modal DOM Elements ---
+            const aiModal = document.getElementById('ai-modal-overlay');
+            const generateAiButton = document.getElementById('generate-ai-button');
+            const closeModalButton = document.getElementById('close-modal-button');
+            const runGenerationButton = document.getElementById('run-generation-button');
+            const aiPromptTextarea = document.getElementById('ai-prompt-textarea');
 
             // --- 1. INITIALIZE MONACO EDITOR ---
             require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs' }});
             require(['vs/editor/editor.main'], () => {
                 editor = monaco.editor.create(editorContainer, {
-                    value: [
-                        '// --- Welcome to your Web IDE ---',
-                        'module top (',
-                        '  input clk,',
-                        '  input rst,',
-                        '  output reg [7:0] count',
-                        ');',
-                        '',
-                        '  always @(posedge clk or posedge rst) begin',
-                        '    if (rst) begin',
-                        '      count <= 8\'d0;',
-                        '    end else begin',
-                        '      count <= count + 8\'d1;',
-                        '    end',
-                        '  end',
-                        '',
-                        'endmodule'
-                    ].join('\n'),
+                    value: ['// --- Describe your circuit and click "Generate Verilog" ---'].join('\n'),
                     language: 'verilog',
                     theme: 'vs-dark'
                 });
                 window.addEventListener('resize', () => {
                     editor.layout();
-                    // --- NEW: Resize terminal too ---
                     fitAddon.fit();
                 });
             });
 
             // --- 2. INITIALIZE XTERM.JS TERMINAL ---
-            term = new Terminal({
-                cursorBlink: true,
-                theme: { background: '#1a1a1a' }
-            });
-
-            // --- NEW: Load the resize addon ---
+            term = new Terminal({ cursorBlink: true, theme: { background: '#1a1a1a' } });
             term.loadAddon(fitAddon);
-
-            // --- FIX: term.open() is ONLY CALLED ONCE ---
             term.open(originalTerminalContainer);
-            fitAddon.fit(); // Make it fill the container
-            
+            fitAddon.fit(); 
             term.write('Welcome to the HDL Compiler Terminal!\r\n');
             term.write('Connecting to backend server...\r\n');
-
 
             // --- 3. INITIALIZE WEBSOCKET ---
             const WEBSOCKET_URL = `wss://${window.location.host}/compile`; 
@@ -171,8 +225,30 @@
             function connectWebSocket() {
                 try {
                     socket = new WebSocket(WEBSOCKET_URL);
+
+                    // --- REFACTOR: Handle JSON messages from server ---
+                    socket.onmessage = (event) => {
+                        try {
+                            const data = JSON.parse(event.data);
+                            
+                            if (data.type === 'terminalLog') {
+                                // This is a log message, print it to the terminal
+                                term.write(data.message.replace(/\n/g, '\r\n'));
+                                
+                            } else if (data.type === 'generationResult') {
+                                // This is AI-generated code, put it in the editor
+                                editor.setValue(data.code);
+                                aiModal.style.display = 'none'; // Hide modal
+                                runGenerationButton.disabled = false;
+                                runGenerationButton.textContent = 'Generate';
+                            }
+                        } catch (e) {
+                            // Fallback for non-JSON messages (shouldn't happen)
+                            console.error("Received non-JSON message:", event.data);
+                        }
+                    };
+                    
                     socket.onopen = () => term.write('\x1b[32mSuccessfully connected to backend.\x1b[0m\r\n');
-                    socket.onmessage = (event) => term.write(event.data.replace(/\n/g, '\r\n'));
                     socket.onerror = (error) => term.write('\x1b[31mWebSocket Error.\x1b[0m\r\n');
                     socket.onclose = () => term.write('\x1b[33mConnection to backend closed.\x1b[0m\r\n');
                 } catch (err) {
@@ -189,94 +265,96 @@
                     return;
                 }
                 const code = editor.getValue();
-                socket.send(JSON.stringify({ language: 'verilog', code: code }));
+                // Send as a JSON message
+                socket.send(JSON.stringify({ type: 'compile', code: code }));
                 term.write('\x1b[2J\x1b[H--- Compilation started... ---\r\n');
             });
 
-
-            // --- 5. LOGIC FOR DETACH/RE-ATTACH BUTTON (COMPLETELY REWRITTEN) ---
+            // --- 5. DETACH/RE-ATTACH LOGIC (Unchanged) ---
             const detachButton = document.getElementById('detach-button');
+            function reattachTerminal() { /* ... (code from previous step) ... */ }
+            detachButton.addEventListener('click', () => { /* ... (code from previous step) ... */ });
+
+            // --- 6. NEW: AI MODAL BUTTON LISTENERS ---
+            generateAiButton.addEventListener('click', () => {
+                aiModal.style.display = 'flex';
+            });
             
+            closeModalButton.addEventListener('click', () => {
+                aiModal.style.display = 'none';
+            });
+            
+            runGenerationButton.addEventListener('click', () => {
+                const prompt = aiPromptTextarea.value;
+                if (!prompt) {
+                    alert('Please enter a description for your circuit.');
+                    return;
+                }
+                
+                if (!socket || socket.readyState !== WebSocket.OPEN) {
+                    term.write('\x1b[31mNot connected. Reconnecting...\x1b[0m\r\n');
+                    connectWebSocket();
+                    return;
+                }
+                
+                // Disable button to prevent spam
+                runGenerationButton.disabled = true;
+                runGenerationButton.textContent = 'Generating...';
+                
+                // Send a new message type to the backend
+                socket.send(JSON.stringify({ type: 'generate', prompt: prompt }));
+            });
+            
+            // (Re-pasting the detach logic since it was omitted)
             function reattachTerminal() {
                 if (!terminalWindow) return; 
-                
                 const win = terminalWindow;
                 terminalWindow = null; 
-
-                // --- FIX: Move the terminal's DOM back ---
                 originalTerminalContainer.appendChild(term.element);
-                
-                // Restore container styles
                 originalTerminalContainer.style.flexGrow = '4';
                 originalTerminalContainer.style.height = '';
                 originalTerminalContainer.style.overflow = '';
                 editorContainer.style.flexGrow = '6';
-
-                // Resize both components
                 fitAddon.fit();
                 editor.layout();
                 term.focus();
-
                 win.onbeforeunload = null;
                 win.close();
-                
                 detachButton.textContent = 'Detach Terminal';
             }
-            
             detachButton.addEventListener('click', () => {
                 if (terminalWindow) {
                     reattachTerminal();
                 } else {
-                    // --- FIX: Hide the container ---
                     originalTerminalContainer.style.flexGrow = '0';
                     originalTerminalContainer.style.height = '0';
                     originalTerminalContainer.style.overflow = 'hidden';
                     editorContainer.style.flexGrow = '1';
-                    
                     terminalWindow = window.open('', 'TerminalWindow', 'width=800,height=600');
                     if (!terminalWindow) {
                         alert('Popup blocked. Please allow popups for this site.');
-                        reattachTerminal(); // Reset layout
+                        reattachTerminal(); 
                         return;
                     }
-                    
-                    // Setup new window
-                    terminalWindow.document.head.innerHTML = `
-                        <title>Terminal</title>
-                        <style>
-                            body, html { 
-                                margin: 0; padding: 0; height: 100%; width: 100%; 
-                                overflow: hidden; background-color: #1a1a1a; 
-                            }
-                            /* --- FIX: Make terminal fill popup --- */
-                            #popup-term-container { height: 100%; width: 100%; }
-                            .xterm { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
-                        </style>
-                    `;
+                    terminalWindow.document.head.innerHTML = `<title>Terminal</title><style>body, html { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; background-color: #1a1a1a; } #popup-term-container { height: 100%; width: 100%; } .xterm { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }</style>`;
                     const xtermCss = terminalWindow.document.createElement('link');
                     xtermCss.rel = 'stylesheet';
                     xtermCss.href = 'https://cdn.jsdelivr.net/npm/xterm/css/xterm.css';
                     terminalWindow.document.head.appendChild(xtermCss);
-                    
                     const newTermContainer = terminalWindow.document.createElement('div');
                     newTermContainer.id = 'popup-term-container';
                     terminalWindow.document.body.appendChild(newTermContainer);
-
-                    // --- FIX: Move the terminal's DOM to the popup ---
                     newTermContainer.appendChild(term.element);
-
-                    // Resize editor and terminal in their new homes
                     editor.layout();
                     fitAddon.fit();
                     term.focus();
-                    
                     terminalWindow.onbeforeunload = () => {
                         reattachTerminal();
                     };
-                    
                     detachButton.textContent = 'Re-attach Terminal';
                 }
             });
+
         });
     </script>
 </body>
