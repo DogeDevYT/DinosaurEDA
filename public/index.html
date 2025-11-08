@@ -60,13 +60,14 @@
             width: 100%;
             border-bottom: 2px solid #333;
             flex-grow: 6;
+            /* --- FIX: Add transition for smoother resize --- */
+            transition: all 0.2s ease;
         }
 
         #terminal-container {
             width: 100%;
             background-color: #1a1a1a;
             flex-grow: 4;
-            /* --- FIX: Add transition for smoother hide/show --- */
             transition: all 0.2s ease;
         }
 
@@ -101,11 +102,14 @@
             
             let terminalWindow = null; 
             let originalTerminalContainer = document.getElementById('terminal-container');
+            // --- NEW: Get the editor container ---
+            let editorContainer = document.getElementById('editor-container');
+
 
             // --- 1. INITIALIZE MONACO EDITOR ---
             require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs' }});
             require(['vs/editor/editor.main'], () => {
-                editor = monaco.editor.create(document.getElementById('editor-container'), {
+                editor = monaco.editor.create(editorContainer, { // Use variable here
                     value: [
                         '// --- Welcome to your Web IDE ---',
                         'module top (',
@@ -195,9 +199,10 @@
 
                 // --- FIX: Restore the container's flexible properties ---
                 originalTerminalContainer.style.flexGrow = '4';
-                originalTerminalContainer.style.height = ''; // Let flexbox control it
+                originalTerminalContainer.style.height = '';
                 originalTerminalContainer.style.overflow = '';
-                // --- END FIX ---
+                // --- NEW: Restore editor's flex-grow ---
+                editorContainer.style.flexGrow = '6';
                 
                 term.open(originalTerminalContainer); 
                 term.focus();
@@ -212,16 +217,17 @@
                 if (terminalWindow) {
                     reattachTerminal();
                 } else {
-                    // --- FIX: Robustly hide the container ---
+                    // --- FIX: Robustly hide the terminal container ---
                     originalTerminalContainer.style.flexGrow = '0';
                     originalTerminalContainer.style.height = '0';
                     originalTerminalContainer.style.overflow = 'hidden';
-                    // --- END FIX ---
+                    // --- NEW: Make editor fill the space ---
+                    editorContainer.style.flexGrow = '1';
                     
                     terminalWindow = window.open('', 'TerminalWindow', 'width=800,height=600');
                     if (!terminalWindow) {
                         alert('Popup blocked. Please allow popups for this site.');
-                        // Re-show the container if popup fails
+                        // Call reattach to reset the layout if popup fails
                         reattachTerminal(); 
                         return;
                     }
