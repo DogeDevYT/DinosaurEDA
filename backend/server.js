@@ -97,7 +97,7 @@ wss.on('connection', (ws, req) => {
 /**
  * --- 4. The Secure Sandbox Function ---
  */
-async function runInSandbox(ws, code) {
+async function runInSandbox(ws, verilogCode) { 
     let heartbeatInterval = null;
     let tempDir = null;
     let fullOutput = "";
@@ -112,7 +112,7 @@ async function runInSandbox(ws, code) {
         await fs.mkdir(tempDir, { recursive: true });
 
         const codeFile = path.join(tempDir, 'design.v');
-        await fs.writeFile(codeFile, code);
+        await fs.writeFile(codeFile, verilogCode); 
 
         const yosysCommand = 'yosys';
         const yosysArgs = [
@@ -135,18 +135,18 @@ async function runInSandbox(ws, code) {
             fullOutput += data.toString();
         });
 
-        compilerProcess.on('close', async (code) => {
+        // 3. The 'code' variable here is the exit code.
+        compilerProcess.on('close', async (exitCode) => { 
             clearInterval(heartbeatInterval);
-
-            if (code === 0) {
-                // Success
-                sendTerminalLog(ws, `\r\n${ANSI_GREEN}--- Compilation finished (exit code ${code}) ---${ANSI_RESET}\r\n`);
+            
+            if (exitCode === 0) {
+                sendTerminalLog(ws, `\r\n${ANSI_GREEN}--- Compilation finished (exit code ${exitCode}) ---${ANSI_RESET}\r\n`);
             } else {
-                // Failure
-                sendTerminalLog(ws, `\r\n${ANSI_RED}--- Compilation finished (exit code ${code}) ---${ANSI_RESET}\r\n`);
+                sendTerminalLog(ws, `\r\n${ANSI_RED}--- Compilation finished (exit code ${exitCode}) ---${ANSI_RESET}\r\n`);
             }
+            
+            await getGeminiDescription(ws, fullOutput, exitCode, verilogCode); 
 
-            await getGeminiDescription(ws, fullOutput, code); // Explain the output
             fs.rm(tempDir, { recursive: true, force: true })
                 .catch(err => console.error('Failed to clean up temp dir:', err));
         });
@@ -169,32 +169,45 @@ async function runInSandbox(ws, code) {
 }
 
 /**
- * --- 5. Gemini Explanation Function (Unchanged) ---
+ * --- 5. Gemini Explanation Function ---
  */
-async function getGeminiDescription(ws, yosysOutput, exitCode) {
+async function getGeminiDescription(ws, yosysOutput, exitCode, verilogCode) {
     try {
         sendTerminalLog(ws, '\r\n--- 🤖 Gemini is thinking... ---\r\n');
+
         const successString = (exitCode === 0) ? "succeeded" : "failed";
+        
+        // 2. Create a new, much more powerful prompt
         const prompt = `
-            The following is a terminal log from the Yosys Verilog synthesizer. The compilation ${successString} with exit code ${exitCode}.
-            Please analyze this log and provide a simple, beginner-friendly explanation of what happened.
+            A user submitted the following Verilog code for synthesis:
+            --- START VERILOG CODE ---
+            ${verilogCode}
+            --- END VERILOG CODE ---
 
-            - What did the synthesizer do?
-            - Were there any important warnings or errors (like syntax errors or undeclared variables)?
-            - What was the result (e.g., did it print statistics about the synthesized design)?
-            - Keep the explanation concise (2-4 paragraphs).
-
-            Here is the log:
-            ---
+            The Yosys synthesizer ran and the compilation ${successString} with exit code ${exitCode}.
+            Here is the complete Yosys terminal log:
+            --- START YOSYS LOG ---
             ${yosysOutput}
-            ---
+            --- END YOSYS LOG ---
+
+            Please act as a helpful teaching assistant. Analyze BOTH the code and the log to provide a simple, beginner-friendly explanation.
+            
+            - If the compilation failed, look at the error message in the log (e.g., "ERROR: syntax error..."). Find the corresponding line in the Verilog code and explain *exactly* what the user did wrong and how to fix it.
+            - If the compilation succeeded, briefly explain what the statistics in the log mean (e.g., "Number of cells: 22" means it created 22 logic gates).
+            - Keep the explanation concise (2-4 paragraphs).
         `;
-        const request = { contents: [{ role: 'user', parts: [{ text: prompt }] }], };
+
+        const request = {
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        };
+        
         const result = await model.generateContent(request);
         const text = result.response.candidates[0].content.parts[0].text;
+
         sendTerminalLog(ws, `\r\n${ANSI_BLUE}--- 🤖 Gemini's Explanation ---${ANSI_RESET}\r\n`);
         sendTerminalLog(ws, `${ANSI_BLUE}${text}${ANSI_RESET}`);
         sendTerminalLog(ws, `\r\n${ANSI_BLUE}--------------------------------${ANSI_RESET}\r\n`);
+
     } catch (error) {
         console.error("Gemini API Error (Description):", error);
         sendTerminalLog(ws, `\r\n${ANSI_BLUE}--- 🤖 Gemini Error: Could not get explanation. ---${ANSI_RESET}\r\n`);
