@@ -161,7 +161,20 @@ async function getGeminiDescription(ws, yosysOutput, exitCode) {
     try {
         sendTerminalLog(ws, '\r\n--- 🤖 Gemini is thinking... ---\r\n');
         const successString = (exitCode === 0) ? "succeeded" : "failed";
-        const prompt = `... (your existing explanation prompt) ...`; // Kept short for brevity
+        const prompt = `
+            The following is a terminal log from the Yosys Verilog synthesizer. The compilation ${successString} with exit code ${exitCode}.
+            Please analyze this log and provide a simple, beginner-friendly explanation of what happened.
+
+            - What did the synthesizer do?
+            - Were there any important warnings or errors (like syntax errors or undeclared variables)?
+            - What was the result (e.g., did it print statistics about the synthesized design)?
+            - Keep the explanation concise (2-4 paragraphs).
+
+            Here is the log:
+            ---
+            ${yosysOutput}
+            ---
+        `;
         const request = { contents: [{ role: 'user', parts: [{ text: prompt }] }], };
         const result = await model.generateContent(request);
         const text = result.response.candidates[0].content.parts[0].text;
