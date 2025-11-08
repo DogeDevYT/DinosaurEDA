@@ -44,6 +44,13 @@ function sendTerminalLog(ws, message) {
     }
 }
 
+// --- Helper to send non-log JSON ---
+function sendJson(ws, data) {
+    if (ws.readyState === ws.OPEN) {
+        ws.send(JSON.stringify(data));
+    }
+}
+
 // --- 3. WebSocket Connection Logic ---
 wss.on('connection', (ws, req) => {
     const ip = req.headers['cf-connecting-ip'] || req.socket.remoteAddress;
@@ -82,6 +89,9 @@ wss.on('connection', (ws, req) => {
             } else if (data.type === 'generate' && data.prompt) {
                 // User clicked "Generate Verilog"
                 await getGeminiVerilog(ws, data.prompt);
+            } else if (data.type === 'generateDiagram' && data.code) {
+                // --- NEW: Handle Diagram Generation ---
+                await runDiagramGeneration(ws, data.code);
             }
             
         } catch (e) {
@@ -257,7 +267,91 @@ async function getGeminiVerilog(ws, userPrompt) {
     }
 }
 
-// --- 7. Start Listening ---
+/**
+ * --- 7. NEW: Diagram Generation Function ---
+ */
+async function runDiagramGeneration(ws, verilogCode) {
+    let tempDir = null;
+    try {
+        // 1. Create a temp directory
+        const tempId = crypto.randomBytes(16).toString('hex');
+        tempDir = path.join(__dirname, 'temp', tempId); 
+        await fs.mkdir(tempDir, { recursive: true });
+        
+        const codeFile = path.join(tempDir, 'design.v');
+        const dotFile = path.join(tempDir, 'diagram.dot');
+        const pngFile = path.join(tempDir, 'diagram.png');
+
+        await fs.writeFile(codeFile, verilogCode);
+
+        // 2. Define Yosys (Docker) command to create .dot file
+        const yosysCommand = 'yosys';
+        const yosysArgs = [
+            '-p', 
+            `read_verilog design.v; synth; show -format dot -prefix ${path.join('/app', 'diagram')}`
+        ];
+        const dockerArgs = [
+            'run', '--rm', '-v', `${tempDir}:${'/app'}`,
+            '-w', '/app', DOCKER_IMAGE, yosysCommand, ...yosysArgs
+        ];
+        
+        // 3. Run Yosys (Docker) process
+        sendTerminalLog(ws, '--- 📊 [1/3] Synthesizing Verilog... ---\r\n');
+        const yosysProcess = spawn('docker', dockerArgs);
+        yosysProcess.stdin.end();
+
+        // Optional: Pipe Yosys output to terminal for debugging
+        yosysProcess.stdout.on('data', (data) => sendTerminalLog(ws, data.toString()));
+        yosysProcess.stderr.on('data', (data) => sendTerminalLog(ws, data.toString()));
+
+        yosysProcess.on('close', async (yosysCode) => {
+            if (yosysCode !== 0) {
+                sendTerminalLog(ws, `\r\n${ANSI_RED}--- 📊 [ERROR] Yosys failed. Cannot generate diagram. ---${ANSI_RESET}\r\n`);
+                return;
+            }
+            sendTerminalLog(ws, `\r\n${ANSI_GREEN}--- 📊 [1/3] Synthesis complete. ---${ANSI_RESET}\r\n`);
+            
+            // 4. Run Graphviz (dot) command on the host VM
+            sendTerminalLog(ws, '--- 📊 [2/3] Rendering diagram... ---\r\n');
+            const dotProcess = spawn('dot', ['-Tpng', dotFile, '-o', pngFile]);
+
+            dotProcess.on('close', async (dotCode) => {
+                if (dotCode !== 0) {
+                    sendTerminalLog(ws, `\r\n${ANSI_RED}--- 📊 [ERROR] Graphviz (dot) failed. ---${ANSI_RESET}\r\n`);
+                    return;
+                }
+                
+                // 5. Read the PNG file and convert to Base64
+                sendTerminalLog(ws, '--- 📊 [3/3] Sending image to browser... ---\r\n');
+                const imageBuffer = await fs.readFile(pngFile);
+                const base64Image = imageBuffer.toString('base64');
+                const dataUri = `data:image/png;base64,${base64Image}`;
+
+                // 6. Send the data URI to the frontend
+                sendJson(ws, { type: 'diagramResult', imageUrl: dataUri });
+                
+                // 7. Clean up
+                fs.rm(tempDir, { recursive: true, force: true });
+            });
+            
+            dotProcess.on('error', (err) => {
+                sendTerminalLog(ws, `\r\n${ANSI_RED}--- 📊 [ERROR] Failed to run Graphviz (dot). Is it installed? ---${ANSI_RESET}\r\n`);
+            });
+        });
+        
+        yosysProcess.on('error', (err) => {
+            sendTerminalLog(ws, `\r\n${ANSI_RED}--- 📊 [ERROR] Failed to start Yosys (Docker). ---${ANSI_RESET}\r\n`);
+        });
+
+    } catch (err) {
+        sendTerminalLog(ws, `\r\n${ANSI_RED}--- 📊 [FATAL] Diagram generation error: ${err.message} ---${ANSI_RESET}\r\n`);
+        if (tempDir) {
+            await fs.rm(tempDir, { recursive: true, force: true });
+        }
+    }
+}
+
+// --- 8. Start Listening ---
 server.listen(PORT, () => {
     console.log(`Backend server started on http://localhost:${PORT}`);
     console.log(`WebSocket server listening on ws://localhost:${PORT}/compile`);

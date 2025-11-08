@@ -64,6 +64,10 @@
             background-color: #11b866;
         }
 
+        /* --- NEW: Diagram Button Style --- */
+        #generate-diagram-button { background-color: #8a0c8a; }
+        #generate-diagram-button:hover { background-color: #b811b8; }
+
         #editor-container {
             width: 100%;
             border-bottom: 2px solid #333;
@@ -148,6 +152,19 @@
             cursor: not-allowed;
         }
 
+        /* --- NEW: Diagram Modal Styles --- */
+        #diagram-modal-content { width: 80vw; max-width: 1200px; }
+        #diagram-image-container { 
+            width: 100%; max-height: 70vh; overflow: auto; 
+            background-color: #f0f0f0; border: 1px solid #ccc; 
+            border-radius: 4px; display: flex; justify-content: center; align-items: center;
+        }
+        #diagram-image-container img { max-width: 100%; height: auto; }
+        #diagram-download-link {
+            background-color: #007acc; text-decoration: none;
+            display: inline-block;
+        }
+
     </style>
 
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm/css/xterm.css" />
@@ -197,6 +214,13 @@
             const runGenerationButton = document.getElementById('run-generation-button');
             const aiPromptTextarea = document.getElementById('ai-prompt-textarea');
 
+            // --- NEW: Diagram Modal Elements ---
+            const diagramModal = document.getElementById('diagram-modal-overlay');
+            const generateDiagramButton = document.getElementById('generate-diagram-button');
+            const closeDiagramModalButton = document.getElementById('close-diagram-modal-button');
+            const diagramImage = document.getElementById('diagram-image');
+            const diagramDownloadLink = document.getElementById('diagram-download-link');
+
             // --- 1. INITIALIZE MONACO EDITOR ---
             require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs' }});
             require(['vs/editor/editor.main'], () => {
@@ -241,6 +265,15 @@
                                 aiModal.style.display = 'none'; // Hide modal
                                 runGenerationButton.disabled = false;
                                 runGenerationButton.textContent = 'Generate';
+                            } else if (data.type === 'diagramResult') {
+                                // --- Handle Diagram Response ---
+                                if (data.imageUrl) {
+                                    diagramImage.src = data.imageUrl;
+                                    diagramDownloadLink.href = data.imageUrl;
+                                    diagramModal.style.display = 'flex';
+                                } else {
+                                    term.write('\r\n--- ERROR: Failed to generate diagram. ---\r\n');
+                                }
                             }
                         } catch (e) {
                             // Fallback for non-JSON messages (shouldn't happen)
@@ -303,6 +336,26 @@
                 
                 // Send a new message type to the backend
                 socket.send(JSON.stringify({ type: 'generate', prompt: prompt }));
+            });
+
+            // --- 7. NEW: DIAGRAM MODAL LISTENERS ---
+            generateDiagramButton.addEventListener('click', () => {
+                const code = editor.getValue();
+                if (!code) {
+                    alert('Please enter some Verilog code first.');
+                    return;
+                }
+                if (!socket || socket.readyState !== WebSocket.OPEN) {
+                    connectWebSocket();
+                    return;
+                }
+                term.write('\r\n--- 📊 Generating circuit diagram... ---\r\n');
+                socket.send(JSON.stringify({ type: 'generateDiagram', code: code }));
+            });
+
+            closeDiagramModalButton.addEventListener('click', () => {
+                diagramModal.style.display = 'none';
+                diagramImage.src = ''; // Clear image to save memory
             });
             
             // (Re-pasting the detach logic since it was omitted)
