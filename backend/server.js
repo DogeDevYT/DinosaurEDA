@@ -97,7 +97,7 @@ async function runInSandbox(ws, code) {
                 ws.send("...working...\r\n");
             }
         }, 2000);
-        
+
         const tempId = crypto.randomBytes(16).toString('hex');
         tempDir = path.join(__dirname, 'temp', tempId); 
         await fs.mkdir(tempDir, { recursive: true });
@@ -133,7 +133,7 @@ async function runInSandbox(ws, code) {
         compilerProcess.on('close', async (code) => {
             clearInterval(heartbeatInterval);
             ws.send(`\r\n--- Compilation finished (exit code ${code}) ---\r\n`);
-            
+
             await getGeminiDescription(ws, fullOutput, code); // Call Gemini
 
             fs.rm(tempDir, { recursive: true, force: true })
@@ -169,7 +169,7 @@ async function getGeminiDescription(ws, yosysOutput, exitCode) {
         const prompt = `
             The following is a terminal log from the Yosys Verilog synthesizer. The compilation ${successString} with exit code ${exitCode}.
             Please analyze this log and provide a simple, beginner-friendly explanation of what happened.
-            
+
             - What did the synthesizer do?
             - Were there any important warnings or errors (like syntax errors or undeclared variables)?
             - What was the result (e.g., did it print statistics about the synthesized design)?
@@ -185,7 +185,7 @@ async function getGeminiDescription(ws, yosysOutput, exitCode) {
         const request = {
             contents: [{ role: 'user', parts: [{ text: prompt }] }],
         };
-        
+
         const result = await model.generateContent(request);
         const response = result.response;
         // This is how you safely get the text from a Vertex AI response
