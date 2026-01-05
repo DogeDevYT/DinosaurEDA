@@ -8,7 +8,7 @@ DinosaurEDA is a browser-based Integrated Development Environment (IDE) designed
 
 Instant Synthesis: Compile Verilog instantly using the open-source Yosys synthesizer running in a secure, sandboxed backend.
 
-### AI-Powered Feedback: Get intelligent explanations for compiler errors and synthesis results powered by Google Vertex AI (Gemini 1.5 Flash).
+### AI-Powered Feedback: Get intelligent explanations for compiler errors and synthesis results powered by Google Vertex AI (Gemini 2.5 Flash).
 
 ### Generative Coding: Describe circuits in plain English, and let the AI generate the Verilog code for you.
 
