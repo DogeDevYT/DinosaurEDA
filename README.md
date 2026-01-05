@@ -1,4 +1,4 @@
-# DinosaurEDA 🦕
+# DinosaurEDA 🦕 (ide.dinosaureda.tech)
 
 A Cloud-Native, AI-Augmented Verilog IDE in your browser.
 
